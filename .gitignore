@@ -1,8 +1,24 @@
+# Node
 node_modules/
 dist/
 build/
-*.log
-.office-addin-dev-certs/
+.vscode/*
+!.vscode/settings.json
+
+# Logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Certificates (dev)
 *.pem
-*.pfx
-.env
+*.crt
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Office add-in sideload
+~$*.pptx
