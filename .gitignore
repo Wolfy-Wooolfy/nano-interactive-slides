@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+*.log
+.office-addin-dev-certs/
+*.pem
+*.pfx
+.env
