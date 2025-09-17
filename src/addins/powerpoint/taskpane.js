@@ -1,6 +1,11 @@
-const btn = document.getElementById('btn');
-const log = document.getElementById('log');
-btn.addEventListener('click', () => {
-  const t = new Date().toLocaleTimeString();
-  log.textContent = 'Nano Mode clicked at ' + t;
-});
+Office.onReady(() => {
+  const btn = document.getElementById('nano-btn')
+  if (!btn) return
+  btn.addEventListener('click', () => {
+    Office.context.document.setSelectedDataAsync(
+      'NIS: Nano Mode started ✓',
+      { coercionType: Office.CoercionType.Text },
+      () => {}
+    )
+  })
+})
