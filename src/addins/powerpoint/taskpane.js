@@ -1,4 +1,4 @@
-import * as sim from '../../../packages/simulation-engine/index.js'
+import * as sim from '@sim/index.js'
 
 async function loadScene(){
   const res = await fetch('/examples/supply-chain/scene.json')
