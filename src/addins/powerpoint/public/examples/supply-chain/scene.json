@@ -1,4 +1,4 @@
-{
+﻿{
   "version": "0.1",
   "nodes": [
     { "id": "factory", "type": "producer", "rate": 5 },
@@ -9,8 +9,5 @@
     { "from": "factory", "to": "warehouse", "delay": 2 },
     { "from": "warehouse", "to": "store", "delay": 1 }
   ],
-  "params": {
-    "tickMs": 100,
-    "initialStock": { "factory": 0, "warehouse": 10, "store": 0 }
-  }
+  "params": { "tickMs": 100, "initialStock": { "factory": 0, "warehouse": 10, "store": 0 } }
 }
