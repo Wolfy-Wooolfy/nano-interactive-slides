@@ -11,7 +11,7 @@ const httpsConfig = {
 module.exports = {
   mode: "development",
   entry: {
-    taskpane: "./src/taskpane.tsx"
+    taskpane: "./src/taskpane.ts" // تأكد أنه يستخدم TypeScript
   },
   output: {
     path: path.resolve(__dirname, "dist"),
@@ -19,11 +19,20 @@ module.exports = {
     clean: true
   },
   resolve: {
-    extensions: [".ts", ".tsx", ".js"]
+    extensions: [".ts", ".js"]
   },
   module: {
     rules: [
-      { test: /\.tsx?$/, use: "ts-loader", exclude: /node_modules/ },
+      {
+        test: /\.ts$/,
+        include: [path.resolve(__dirname, "src")],
+        use: [
+          {
+            loader: "ts-loader",
+            options: { transpileOnly: true } // فقط الترجمة بدون التحقق الكامل
+          }
+        ]
+      },
       { test: /\.css$/, use: ["style-loader", "css-loader"] },
       { test: /\.(png|jpg|gif|svg)$/, type: "asset/resource" },
       { test: /\.html$/, use: "html-loader" }
@@ -31,23 +40,19 @@ module.exports = {
   },
   devServer: {
     static: [
-      { directory: path.join(__dirname, "dist") },
-      { directory: path.join(__dirname, "assets") },
-      { directory: path.join(__dirname, "examples") }
+      { directory: path.join(__dirname, "dist"), serveIndex: false },
+      { directory: path.join(__dirname, "assets"), serveIndex: false },
+      { directory: path.join(__dirname, "examples"), serveIndex: false }
     ],
-    server: {
-      type: "https",
-      options: httpsConfig
-    },
+    server: { type: "https", options: httpsConfig },
     host: "localhost",
     port: 3000,
     hot: true,
     allowedHosts: "all",
-    headers: {
-      "Access-Control-Allow-Origin": "*"
-    },
+    headers: { "Access-Control-Allow-Origin": "*" },
     historyApiFallback: {
-      rewrites: [{ from: /^\/taskpane.html$/, to: "/taskpane.html" }]
+      index: "/taskpane.html",
+      rewrites: [{ from: /^\/$/, to: "/taskpane.html" }]
     }
   }
 };
