@@ -8,5 +8,10 @@
   ],
   "scripts": {
     "dev": "echo \"Select a workspace: src/addins/powerpoint\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "office-addin-dev-certs": "^2.0.3"
   }
 }
