@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "clean:settings": "node -e \"console.log('Nothing to clean locally for Office settings; they persist in the doc')\"",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
