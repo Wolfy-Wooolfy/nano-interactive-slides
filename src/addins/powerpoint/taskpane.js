@@ -1,8 +1,12 @@
+// [NIS] taskpane.js (powerpoint root) - Step 3: persistence + reset + bindings
 (() => {
-  const inOffice = typeof window.Office !== "undefined" && Office?.context?.host;
+  const inOffice = typeof Office !== "undefined" && Office?.context?.host;
   let scene = null, running = false, nano = false, lastTick = 0, acc = 0;
   let currentSlideId = "unknown", saveTimer = null, lastSerialized = "";
 
+  console.log("[NIS] LOADED src/addins/powerpoint/taskpane.js ✅");
+
+  // ---- default scene ----
   const defaultScene = {
     version: "0.1",
     nodes: [
@@ -17,20 +21,19 @@
     params: { tickMs: 100, initialStock: { factory: 0, warehouse: 10, store: 0 } }
   };
 
-  const keyFor = (slideId) => `scene:${slideId}`;
+  const keyFor = (slideId) => `scene:${slideId || "default"}`;
+  const log = (...a) => console.log("[NIS]", ...a);
 
   async function getSlideId() {
+    if (!inOffice) return "default";
     try {
       return await PowerPoint.run(async (ctx) => {
-        const slides = ctx.presentation.getSelectedSlides();
-        slides.load("items/id,items/index");
+        const sel = ctx.presentation.getSelectedSlides();
+        sel.load("items/id");
         await ctx.sync();
-        if (slides.items.length > 0 && slides.items[0].id) return slides.items[0].id;
-        return "unknown";
+        return sel.items[0]?.id || "default";
       });
-    } catch {
-      return "unknown";
-    }
+    } catch { return "default"; }
   }
 
   function saveScene(slideId, scn) {
@@ -44,7 +47,6 @@
       } catch (e) { reject(e); }
     });
   }
-
   function loadSceneFromSettings(slideId) {
     try {
       const v = Office.context.document.settings.get(keyFor(slideId));
@@ -53,48 +55,24 @@
     } catch { return null; }
   }
 
-  function ensureUI() {
-    // زر Reset لو مش موجود
-    if (!document.getElementById("reset")) {
-      const row = document.querySelector(".row") || document.body;
-      const btn = document.createElement("button");
-      btn.id = "reset";
-      btn.textContent = "Reset";
-      btn.style.marginLeft = "8px";
-      row.appendChild(btn);
-    }
-    // كانفاس العرض
-    let view = document.getElementById("view");
-    if (view && !document.getElementById("sim")) {
-      const c = document.createElement("canvas");
-      c.id = "sim"; c.width = 720; c.height = 360;
-      c.style.border = "1px solid #ddd"; c.style.marginTop = "8px";
-      view.appendChild(c);
-    } else if (!view) {
-      view = document.createElement("div");
-      view.id = "view";
-      const c = document.createElement("canvas");
-      c.id = "sim"; c.width = 720; c.height = 360;
-      c.style.border = "1px solid #ddd"; c.style.marginTop = "8px";
-      view.appendChild(c);
-      document.body.appendChild(view);
-    }
-    return { canvas: document.getElementById("sim"), ctx: document.getElementById("sim").getContext("2d") };
-  }
-
-  function renderHud(text) {
-    const s = document.getElementById("time");
-    if (!s) return;
+  // ---------- HUD ----------
+  function renderStatus(text) {
+    const hud = document.getElementById("time") || document.getElementById("status");
+    if (!hud) return;
     const f = scene?.nodes?.find(n=>n.id==="factory");
     const w = scene?.nodes?.find(n=>n.id==="warehouse");
     const st = scene?.nodes?.find(n=>n.id==="store");
-    s.textContent = `t=${Date.now()%100000} | factory=${f?.stock??0} | warehouse=${w?.stock??0} | store=${st?.stock??0} | nano=${nano?"ON":"OFF"} | ${text}`;
+    hud.textContent = `t=${Date.now()%100000} | factory=${f?.stock??0} | warehouse=${w?.stock??0} | store=${st?.stock??0} | nano=${nano?"ON":"OFF"} | ${text}`;
   }
 
+  // ---------- رسم ومحاكاة ----------
   function draw() {
     if (!scene) return;
-    const { canvas, ctx } = ensureUI();
+    const canvas = document.getElementById("sim");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
     ctx.clearRect(0,0,canvas.width,canvas.height);
+
     const nodes = scene.nodes, pos = {}, nx = Math.max(1, nodes.length);
     nodes.forEach((n, i) => pos[n.id] = { x: 120 + i * ((canvas.width - 240) / (nx - 1 || 1)), y: canvas.height/2 });
 
@@ -128,49 +106,31 @@
     }
     draw();
   }
+  function loop(ts){ if(!running) return; if(!lastTick) lastTick=ts; const dt=ts-lastTick; lastTick=ts; acc+=dt; if(acc>=30){ tick(acc); acc=0; } requestAnimationFrame(loop); }
+  function start(){ if(!scene) return; running=true; nano=false; lastTick=0; acc=0; renderStatus("Started"); requestAnimationFrame(loop); }
+  function stop(){ running=false; nano=false; lastTick=0; acc=0; if(scene) scene.nodes.forEach(n=>n.stock=(scene.params.initialStock[n.id]??0)); draw(); renderStatus("Stopped"); }
+  function nanoMode(){ if(!scene) return; running=true; nano=true; lastTick=0; acc=0; renderStatus(inOffice?"Nano Mode (Office)":"Nano Mode (Browser)"); draw(); requestAnimationFrame(loop); }
 
-  function loop(ts) {
-    if (!running) return;
-    if (!lastTick) lastTick = ts;
-    const dt = ts - lastTick; lastTick = ts; acc += dt;
-    if (acc >= 30) { tick(acc); acc = 0; }
-    requestAnimationFrame(loop);
-  }
-
-  function start(){ if(!scene) return; running=true; nano=false; lastTick=0; acc=0; renderHud("Started"); requestAnimationFrame(loop); }
-  function stop(){ running=false; nano=false; lastTick=0; acc=0; if(scene) scene.nodes.forEach(n=>n.stock=(scene.params.initialStock[n.id]??0)); draw(); renderHud("Stopped"); }
-  function nanoMode(){
-    if(!scene) return; running=true; nano=true; lastTick=0; acc=0; renderHud(inOffice?"Nano Mode (Office)":"Nano Mode (Browser)"); draw();
-    if(inOffice){ try{ Office.context.document.setSelectedDataAsync("[NANO MODE]",()=>requestAnimationFrame(loop)); } catch{ requestAnimationFrame(loop); } }
-    else requestAnimationFrame(loop);
-  }
-
-  function serializeScene(s){ try{ return JSON.stringify(s); } catch{ return ""; } }
+  // ---------- Persistence ----------
+  const serialize = (s)=>{ try{return JSON.stringify(s);}catch{return"";} };
   function scheduleSave(){
     if (!inOffice || currentSlideId==="unknown") return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      try {
-        const now = serializeScene(scene);
-        if (now !== lastSerialized) { await saveScene(currentSlideId, scene); lastSerialized = now; }
-      } catch {}
+      try { const now = serialize(scene); if (now !== lastSerialized) { await saveScene(currentSlideId, scene); lastSerialized = now; } }
+      catch {}
     }, 1000);
   }
 
-  function getInput(idCandidates){
-    for(const id of idCandidates){ const el = document.getElementById(id); if(el) return el; }
-    return null;
-  }
-
   function bindInputs(){
-    const f = getInput(["input-factory","nis-factory"]);
-    const w = getInput(["input-warehouse","nis-warehouse"]);
-    const s = getInput(["input-store","nis-store"]);
-    const factory = () => scene.nodes.find(n=>n.id==="factory");
+    const f = document.getElementById("input-factory");
+    const w = document.getElementById("input-warehouse");
+    const s = document.getElementById("input-store");
+    const factory   = () => scene.nodes.find(n=>n.id==="factory");
     const warehouse = () => scene.nodes.find(n=>n.id==="warehouse");
-    const store = () => scene.nodes.find(n=>n.id==="store");
+    const store     = () => scene.nodes.find(n=>n.id==="store");
 
-    function syncInputsFromScene(){
+    function syncFromScene(){
       if(!scene) return;
       if(f) f.value = String(factory()?.rate ?? 5);
       if(w) w.value = String(warehouse()?.capacity ?? 50);
@@ -178,13 +138,13 @@
     }
     function updateFromInputs(){
       if(!scene) return;
-      if(f){ const v = Number(f.value||0); const n=factory(); if(n) n.rate = v; }
-      if(w){ const v = Number(w.value||0); const n=warehouse(); if(n) n.capacity = v; }
-      if(s){ const v = Number(s.value||0); const n=store(); if(n) n.rate = v; }
-      draw(); scheduleSave(); renderHud("Changed");
+      if(f){ const v=Number(f.value||0); const n=factory(); if(n) n.rate=v; }
+      if(w){ const v=Number(w.value||0); const n=warehouse(); if(n) n.capacity=v; }
+      if(s){ const v=Number(s.value||0); const n=store(); if(n) n.rate=v; }
+      draw(); scheduleSave(); renderStatus("Changed");
     }
     [f,w,s].forEach(inp => inp?.addEventListener("input", updateFromInputs));
-    syncInputsFromScene();
+    syncFromScene();
   }
 
   async function loadForCurrentSlide(){
@@ -198,22 +158,28 @@
     }
     if (!data) data = JSON.parse(JSON.stringify(defaultScene));
     data.nodes.forEach(n => (n.stock = data.params.initialStock[n.id] ?? 0));
-    scene = data; lastSerialized = serializeScene(scene);
-    draw(); bindInputs(); renderHud("Ready");
+    scene = data; lastSerialized = serialize(scene);
+    draw(); bindInputs(); renderStatus("Ready");
   }
 
+  // ---------- ربط الأزرار (مرن مع IDs متعددة) ----------
   function wireButtons(){
-    const $ = (id)=>document.getElementById(id);
-    ($("#start"))?.addEventListener("click", start);
-    ($("#stop"))?.addEventListener("click", stop);
-    ($("#nano-btn") || $("#nano") || $("#nano-mode") || $("#nanoMode") || $("#NanoMode"))?.addEventListener("click", nanoMode);
-    ($("#reset"))?.addEventListener("click", async ()=> {
+    const byIds = (...ids) => ids.map(id => document.getElementById(id)).find(Boolean);
+    const startBtn = byIds("start","btn-start");
+    const stopBtn  = byIds("stop","btn-stop");
+    const nanoBtn  = byIds("nano-btn","btn-nano","nano","nano-mode","nanoMode","NanoMode");
+    const resetBtn = byIds("reset","btn-reset");
+
+    if (startBtn) { startBtn.addEventListener("click", start); log("bound start"); }
+    if (stopBtn)  { stopBtn.addEventListener("click", stop);  log("bound stop"); }
+    if (nanoBtn)  { nanoBtn.addEventListener("click", nanoMode); log("bound nano"); }
+    if (resetBtn) { resetBtn.addEventListener("click", async () => {
       scene = JSON.parse(JSON.stringify(defaultScene));
       scene.nodes.forEach(n => (n.stock = scene.params.initialStock[n.id] ?? 0));
       draw(); bindInputs();
-      if (inOffice && currentSlideId !== "unknown") { await saveScene(currentSlideId, scene); lastSerialized = serializeScene(scene); }
-      renderHud("Reset");
-    });
+      if (inOffice && currentSlideId !== "unknown") { await saveScene(currentSlideId, scene); lastSerialized = serialize(scene); }
+      renderStatus("Reset");
+    }); log("bound reset"); }
   }
 
   function watchSelectionChange(){
@@ -224,6 +190,7 @@
     );
   }
 
-  function boot(){ ensureUI(); wireButtons(); watchSelectionChange(); loadForCurrentSlide(); }
-  if (inOffice) { Office.onReady(() => boot()); } else { window.addEventListener("DOMContentLoaded", boot); }
+  function boot(){ wireButtons(); bindInputs(); watchSelectionChange(); loadForCurrentSlide(); }
+  if (inOffice) { Office.onReady(() => { log("Office ready"); boot(); }); }
+  else { window.addEventListener("DOMContentLoaded", () => { log("DOM ready (browser)"); boot(); }); }
 })();

@@ -9,32 +9,38 @@
       h1{margin:0 0 12px 0;font-size:24px}
       .row{margin:8px 0}
       button{padding:6px 10px;margin-right:8px}
-      table{border-collapse:collapse;margin-top:10px;width:100%}
-      th,td{border:1px solid #ddd;padding:6px;text-align:left}
       small{color:#666}
+      label{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+      input[type="number"]{width:100%}
+      #view{margin-top:8px}
     </style>
   </head>
   <body>
     <h1>Nano Interactive Slides</h1>
+
     <div class="row">
       <button id="start">Start</button>
       <button id="stop">Stop</button>
       <button id="nano-btn">Nano Mode</button>
+      <button id="reset">Reset</button>
     </div>
+
     <div class="row"><small id="time"></small></div>
-    <div id="view"></div>
-    <div>
-  	<label>Factory</label>
-  	<input id="input-factory" type="number" value="0" />
+
+    <label for="input-factory">Factory Rate</label>
+    <input id="input-factory" type="number" value="5" />
+
+    <label for="input-warehouse">Warehouse Capacity</label>
+    <input id="input-warehouse" type="number" value="50" />
+
+    <label for="input-store">Store Rate</label>
+    <input id="input-store" type="number" value="4" />
+
+    <div id="view">
+      <canvas id="sim" width="720" height="360" style="border:1px solid #ddd"></canvas>
     </div>
-    <div>
-  	<label>Warehouse</label>
-  	<input id="input-warehouse" type="number" value="0" />
-    </div>
-    <div>
-	  <label>Store</label>
-	  <input id="input-store" type="number" value="0" />
-    </div>
+
+    <!-- مهم: ده بيشير للملف في جذر فولدر PowerPoint -->
     <script type="module" src="/taskpane.js"></script>
   </body>
 </html>
