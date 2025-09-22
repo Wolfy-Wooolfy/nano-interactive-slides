@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>NIS Task Pane</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+  <div id="app">
+    <h2>Nano Interactive Slides</h2>
+    <div class="row">
+      <button id="btn-start">Start</button>
+      <button id="btn-stop">Stop</button>
+      <button id="btn-nano">Nano Mode</button>
+    </div>
+    <div class="panel">
+      <h3>Scenario Controls</h3>
+      <div class="ctrl"><label>Tick (ms)</label><input id="inp-tick" type="number" min="10" step="10" value="100"/></div>
+      <div class="ctrl"><label>Speed x</label><input id="inp-speed" type="number" min="0.1" step="0.1" value="1"/></div>
+      <div class="ctrl"><label>Factory Rate</label><input id="inp-factory" type="number" min="0" step="0.1" value="5"/></div>
+      <div class="ctrl"><label>Warehouse Capacity</label><input id="inp-warehouse" type="number" min="0" step="1" value="50"/></div>
+      <div class="ctrl"><label>Store Rate</label><input id="inp-store" type="number" min="0" step="0.1" value="4"/></div>
+      <div class="ctrl"><label>Delay F→W</label><input id="inp-dfw" type="number" min="0" step="0.1" value="2"/></div>
+      <div class="ctrl"><label>Delay W→S</label><input id="inp-dws" type="number" min="0" step="0.1" value="1"/></div>
+      <div class="row">
+        <button id="btn-load-slide">Load Scenario from Slide</button>
+        <button id="btn-save-slide">Save Scenario to Slide</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Live State</h3>
+      <div id="state-box"></div>
+    </div>
+    <div class="panel" id="nano-panel" style="display:none;">
+      <h3>Nano Reality Layers</h3>
+      <div id="nano-stage" style="height:160px;position:relative;overflow:hidden;border:1px solid #ddd;border-radius:10px;"></div>
+    </div>
+  </div>
+  <script type="module" src="/taskpane/taskpane.js"></script>
+</body>
+</html>

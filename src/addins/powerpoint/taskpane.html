@@ -1,46 +1,24 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Nano Interactive Slides</title>
-    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-    <style>
-      body{font-family:Segoe UI,Arial,Helvetica,sans-serif;padding:16px}
-      h1{margin:0 0 12px 0;font-size:24px}
-      .row{margin:8px 0}
-      button{padding:6px 10px;margin-right:8px}
-      small{color:#666}
-      label{display:flex;flex-direction:column;gap:4px;margin:6px 0}
-      input[type="number"]{width:100%}
-      #view{margin-top:8px}
-    </style>
-  </head>
-  <body>
-    <h1>Nano Interactive Slides</h1>
-
-    <div class="row">
-      <button id="start">Start</button>
-      <button id="stop">Stop</button>
-      <button id="nano-btn">Nano Mode</button>
-      <button id="reset">Reset</button>
-    </div>
-
-    <div class="row"><small id="time"></small></div>
-
-    <label for="input-factory">Factory Rate</label>
-    <input id="input-factory" type="number" value="5" />
-
-    <label for="input-warehouse">Warehouse Capacity</label>
-    <input id="input-warehouse" type="number" value="50" />
-
-    <label for="input-store">Store Rate</label>
-    <input id="input-store" type="number" value="4" />
-
-    <div id="view">
-      <canvas id="sim" width="720" height="360" style="border:1px solid #ddd"></canvas>
-    </div>
-
-    <!-- مهم: ده بيشير للملف في جذر فولدر PowerPoint -->
-    <script type="module" src="/taskpane.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nano Interactive Slides</title>
+  <style>
+    body{font-family:Segoe UI,Arial,Helvetica,sans-serif;margin:0;padding:12px}
+    .row{display:flex;gap:8px;margin-bottom:8px}
+    .panel{border:1px solid #e5e5e5;border-radius:10px;padding:10px;margin-top:8px}
+    .ctrl{display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;margin:6px 0}
+    #state-box{white-space:pre-wrap}
+    #nano-stage{height:160px;position:relative;overflow:hidden;border:1px solid #ddd;border-radius:10px}
+    .hidden{display:none}
+  </style>
+  <!-- مهم: يعرّف window.Office عند التشغيل سواء في المتصفح أو داخل PowerPoint -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+  <div id="nis-root"></div>
+  <script src="./taskpane.js"></script>
+</body>
 </html>
