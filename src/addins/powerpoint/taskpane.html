@@ -1,24 +1,67 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=Edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Nano Interactive Slides</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://localhost:3000 https://appsforoffice.microsoft.com; connect-src https://localhost:3000 wss://localhost:3000; frame-ancestors 'self'; img-src 'self' data: https://localhost:3000; style-src 'self' 'unsafe-inline'; script-src 'self' https://localhost:3000 https://appsforoffice.microsoft.com 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{font-family:Segoe UI,Arial,Helvetica,sans-serif;margin:0;padding:12px}
-    .row{display:flex;gap:8px;margin-bottom:8px}
-    .panel{border:1px solid #e5e5e5;border-radius:10px;padding:10px;margin-top:8px}
-    .ctrl{display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;margin:6px 0}
-    #state-box{white-space:pre-wrap}
-    #nano-stage{height:160px;position:relative;overflow:hidden;border:1px solid #ddd;border-radius:10px}
-    .hidden{display:none}
+    body{font-family:Segoe UI,Tahoma,Arial,sans-serif;margin:0;padding:16px;background:#ffffff}
+    h1{font-size:16px;margin:0 0 12px}
+    .row{display:flex;gap:8px;align-items:center;margin:8px 0}
+    .grow{flex:1}
+    .box{border:1px solid #e5e5e5;border-radius:8px;padding:12px;margin-top:8px}
+    .label{width:90px}
+    input[type=range]{width:100%}
+    .btn{padding:8px 12px;border:1px solid #ddd;border-radius:8px;background:#f7f7f7;cursor:pointer}
+    .btn:active{transform:scale(0.99)}
+    #progressWrap{height:8px;background:#eee;border-radius:8px;overflow:hidden}
+    #progressBar{height:8px;width:0%}
   </style>
-  <!-- مهم: يعرّف window.Office عند التشغيل سواء في المتصفح أو داخل PowerPoint -->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script defer src="./taskpane.js"></script>
 </head>
 <body>
-  <div id="nis-root"></div>
-  <script src="./taskpane.js"></script>
+  <h1>Nano Interactive Slides</h1>
+
+  <div class="box">
+    <div class="row">
+	<button id="btnReset" class="btn" onclick="NISReset()">Reset</button>
+	<button id="btnStart" class="btn" onclick="NISStart()">Start</button>
+	<button id="btnStop"  class="btn" onclick="NISStop()">Stop</button>
+	<button id="btnSync"  class="btn" onclick="NISSync()">Sync</button>
+	<div id="slideId" class="grow" style="text-align:right;opacity:.6"></div>
+    </div>
+    <div id="status" style="margin:6px 0 0;color:#b45309;font-size:12px;"></div>
+
+    <div class="row">
+	<div class="label">Speed</div>
+	<input id="speed" type="range" min="0" max="5" step="0.1" data-nis-param="speed" class="grow">
+	<input id="speedNum" type="number" step="0.1" min="0" max="5" data-nis-param="speed" style="width:80px">
+    </div>
+
+
+    <div class="row">
+      <div class="label">Capacity</div>
+      <input id="capacity" type="number" min="0" max="100" value="50" data-nis-param="capacity" class="grow">
+    </div>
+
+    <div class="row">
+      <div class="label">Delay</div>
+      <input id="delay" type="number" min="0.05" step="0.05" value="1" data-nis-param="delay" class="grow">
+    </div>
+
+    <div class="row">
+      <div class="label">Progress</div>
+      <div class="grow" id="progressWrap"><div id="progressBar"></div></div>
+      <div style="width:40px;text-align:right" id="progress">0</div>
+    </div>
+  </div>
+
+  <script>
+    function __updateBar(p){var bar=document.getElementById("progressBar"); if(bar){var w=Math.max(0,Math.min(100,Number(p)||0)); bar.style.width=w+"%"; bar.style.background=w<33?"#ef4444":w<66?"#f59e0b":"#10b981";}}
+    var _obs=new MutationObserver(function(){var t=document.getElementById("progress"); if(t){__updateBar(t.textContent);}});
+    window.addEventListener("DOMContentLoaded",function(){var t=document.getElementById("progress"); if(t){_obs.observe(t,{childList:true,subtree:true});}});
+  </script>
 </body>
 </html>

@@ -1,27 +1,19 @@
-import { defineConfig } from 'vite'
-import fs from 'node:fs'
-import path from 'node:path'
+import { defineConfig } from "vite";
+import fs from "fs";
+import path from "path";
 
-const certDir = path.join(process.env.USERPROFILE, '.office-addin-dev-certs')
-const certPath = path.join(certDir, 'localhost.crt')
-const keyPath  = path.join(certDir, 'localhost.key')
-
-const rootDir = __dirname
-const repoRoot = path.resolve(rootDir, '../../..')
-const packagesDir = path.resolve(repoRoot, 'packages')
+const HOME = process.env.USERPROFILE || process.env.HOME;
+const CERTS = path.join(HOME, ".office-addin-dev-certs");
 
 export default defineConfig({
-  root: rootDir,
   server: {
-    https: { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
-    host: 'localhost',
+    https: {
+      key: fs.readFileSync(path.join(CERTS, "localhost.key")),
+      cert: fs.readFileSync(path.join(CERTS, "localhost.crt")),
+    },
+    host: "localhost",
     port: 3000,
-    strictPort: true,
-    fs: { allow: [rootDir, packagesDir, repoRoot] }
+    strictPort: true
   },
-  resolve: {
-    alias: {
-      '@sim': path.resolve(packagesDir, 'simulation-engine')
-    }
-  }
-})
+  build: { outDir: "dist", emptyOutDir: true }
+});
