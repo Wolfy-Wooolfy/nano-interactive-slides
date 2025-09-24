@@ -8,7 +8,7 @@
   <style>
     body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:16px}
     .row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-    .row label{width:110px}
+    .row label{width:130px}
     .row input[type="range"]{flex:1}
     .grid{display:grid;gap:12px}
     .btns{display:flex;gap:8px;flex-wrap:wrap}
@@ -18,14 +18,56 @@
     .muted{font-size:12px;color:#777}
     .tog{display:flex;align-items:center;gap:8px}
     .half{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .title{margin:0 0 8px 0}
+    .inputs{display:grid;gap:8px}
   </style>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <!-- مزوّد الصور (اختياري). لازم يكون قبل taskpane.js -->
+  <script src="./nano-image-provider.js"></script>
   <script defer src="./taskpane.js"></script>
 </head>
 <body>
   <h2>Nano Interactive Slides</h2>
+
   <div class="grid">
     <div class="card">
+      <h3 class="title">Nano Mode</h3>
+      <div class="inputs">
+        <div class="row">
+          <label for="nmTheme">Style Theme</label>
+          <input id="nmTheme" type="text" placeholder="e.g. Clean tech isometric" />
+        </div>
+        <div class="row">
+          <label for="nmSeed">Seed</label>
+          <input id="nmSeed" type="number" min="0" step="1" value="42" />
+        </div>
+        <div class="row">
+          <label for="nmPrompt">Prompt Add-on</label>
+          <input id="nmPrompt" type="text" placeholder="scene content words" />
+        </div>
+        <div class="row">
+          <label for="nmAspect">Aspect</label>
+          <select id="nmAspect">
+            <option value="16:9" selected>16:9 (1920×1080)</option>
+            <option value="4:3">4:3 (1024×768)</option>
+            <option value="1:1">1:1 (1024×1024)</option>
+          </select>
+        </div>
+        <div id="nmBusy" style="display:none;font-size:12px;color:#555">Generating…</div>
+        <div class="tog"><input id="nmCaption" type="checkbox" /><label for="nmCaption">Caption (debug only)</label></div>
+      </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="nmSave">Save Style</button>
+        <button id="nmStyleSelected">Style Selected</button>
+        <button id="nmRegenSelected">Re-generate Selected</button>
+      </div>
+      <div class="muted" id="nmHint">Tip: لو عايز مقاس معيّن، اختَر Placeholder/صورة بالمقاس ده وبعدين اضغط Style Selected.</div>
+      <div class="tog"><input id="nmAutoInc" type="checkbox" checked />
+      <label for="nmAutoInc">Auto-increment seed on Re-generate</label></div>
+    </div>
+
+    <div class="card">
+      <h3 class="title">Simulation Controls</h3>
       <div class="row">
         <label for="speed">Speed</label>
         <input id="speed" type="range" min="1" max="100" step="1" value="50" />
@@ -41,10 +83,17 @@
         <input id="delay" type="range" min="0" max="10" step="0.1" value="1" />
         <div class="value" id="delayVal">1.0</div>
       </div>
+
       <div class="half">
         <div class="tog"><input id="projectToggle" type="checkbox" checked /><label for="projectToggle">Project to slide</label></div>
         <div class="row"><label for="projectMs">Project ms</label><input id="projectMs" type="number" min="250" step="50" value="1000" /></div>
       </div>
+
+      <div class="half">
+        <div class="tog"><input id="autoStartToggle" type="checkbox" checked /><label for="autoStartToggle">Auto-Start on slide</label></div>
+        <div class="tog"><input id="stopOnChangeToggle" type="checkbox" checked /><label for="stopOnChangeToggle">Stop on slide change</label></div>
+      </div>
+
       <div class="btns">
         <button id="start">Start</button>
         <button id="stop">Stop</button>
