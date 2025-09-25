@@ -11,8 +11,9 @@
     "start": "webpack serve --config webpack.config.js",
     "build": "webpack --config webpack.config.js",
     "dev-addin": "pnpm --dir src/addins/powerpoint dev",
-    "start-addin": "pnpm --dir src/addins/powerpoint exec office-addin-debugging start .\\manifest.xml desktop --app powerpoint --no-debug --no-live-reload",
-    "stop-addin": "pnpm --dir src/addins/powerpoint exec office-addin-debugging stop"
+    "start-addin": "office-addin-debugging start src/addins/powerpoint/manifest.xml",
+    "stop-addin": "office-addin-debugging stop src/addins/powerpoint/manifest.xml",
+    "validate-addin": "office-addin-manifest validate src/addins/powerpoint/manifest.xml"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
