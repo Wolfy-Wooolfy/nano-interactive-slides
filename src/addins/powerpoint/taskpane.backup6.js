@@ -1,4 +1,4 @@
-/* ======== Nano Interactive Slides - taskpane.js (per-slide, fast, linked sequence + auto-advance + inherit + helpers restored) ======== */
+/* ======== Nano Interactive Slides - taskpane.js (per-slide, fast, linked sequence + auto-advance) ======== */
 
 /* ---------- Keys ---------- */
 const NIS_KEY_PREFIX = 'NIS:scene:'; 
@@ -7,7 +7,7 @@ function nisKey(k){ return NIS_KEY_PREFIX + k; }
 const NIS_STYLE_KEY_PREFIX='NIS:style:'; 
 function nmStyleKey(slideKey){ return NIS_STYLE_KEY_PREFIX + (slideKey||'default'); }
 
-const NIS_LINK_KEY_PREFIX='NIS:link:'; // {enabled,next,auto,autoMs,inherit,inheritNm}
+const NIS_LINK_KEY_PREFIX='NIS:link:'; // per-slide link settings {enabled,next,auto,autoMs}
 
 /* ---------- Defaults (Simulation Controls) ---------- */
 const NIS_DEFAULT_PARAMS = Object.freeze({
@@ -22,11 +22,7 @@ const NIS_DEFAULT_PARAMS = Object.freeze({
 
 /* ---------- Fast in-memory cache ---------- */
 const __NIS_STATE_CACHE = new Map();   // slideKey -> params
-const __NIS_LINK_CACHE  = new Map();   // slideKey -> link cfg
-let   __NIS_ACTIVE_SLIDE_KEY=null;
-
-/* transient flag: when advancing via Linked Sequence, we may inherit on first visit */
-let __NIS_INHERIT_NEXT = null;
+const __NIS_LINK_CACHE  = new Map();   // slideKey -> {enabled,next,auto,autoMs}
 
 /* ---------- Debounced settings save (150ms) ---------- */
 let __nisSaveTimer=null, __nisSavePending=false;
@@ -60,14 +56,8 @@ function q(id){ return document.getElementById(id); }
 function hostIsOffice(){ try{ return !!(Office&&Office.context&&Office.context.host); }catch(e){ return false; } }
 function hostIsPowerPoint(){ try{ return Office.context.host==='PowerPoint'; }catch(e){ return false; } }
 
-/* Show host hint (restored helper) */
-function setHostHint(){
-  const h=q('hostHint'); if(!h) return;
-  try{
-    if(hostIsOffice()) h.textContent='Host: '+Office.context.host+(hostIsPowerPoint()?' (projection enabled)':'');
-    else h.textContent='Host: Browser preview';
-  }catch(e){ h.textContent='Host: Browser'; }
-}
+/* ---------- Active slide ---------- */
+let __NIS_ACTIVE_SLIDE_KEY=null;
 
 /* ---------- UI params (Simulation Controls) ---------- */
 function getUIParams(){
@@ -101,11 +91,11 @@ function setUIParams(p){
 
   const e=getActiveEngine();
   if(e){
-    e.setSpeed?.(p.speed);
-    e.setCapacity?.(p.capacity);
-    e.setDelay?.(p.delay);
-    e.setProjectToSlide?.(!!p.projectToSlide);
-    if(typeof p.projectMs==='number') e.setProjectMs?.(p.projectMs);
+    if(typeof p.speed==='number' && e.setSpeed) e.setSpeed(p.speed);
+    if(typeof p.capacity==='number' && e.setCapacity) e.setCapacity(p.capacity);
+    if(typeof p.delay==='number' && e.setDelay) e.setDelay(p.delay);
+    if(e.setProjectToSlide) e.setProjectToSlide(!!p.projectToSlide);
+    if(e.setProjectMs && typeof p.projectMs==='number') e.setProjectMs(p.projectMs);
   }
 }
 
@@ -133,14 +123,6 @@ function restoreCurrentSlide(){
   setUIParams(defaults);
   __NIS_STATE_CACHE.set(__NIS_ACTIVE_SLIDE_KEY, {...defaults});
   NISPersist.saveScene(__NIS_ACTIVE_SLIDE_KEY, defaults);
-}
-
-/* ---------- Nano style helpers (per slide) ---------- */
-function nmLoadStyleForSlideKey(k){
-  try{ const raw=Office.context.document.settings.get(nmStyleKey(k)); return raw?JSON.parse(raw):null; }catch(e){ return null; }
-}
-function nmSaveStyleForSlideKey(k,s){
-  try{ Office.context.document.settings.set(nmStyleKey(k), JSON.stringify(s)); nisScheduleSave(); }catch(e){}
 }
 
 /* ---------- Fast slide id (race) ---------- */
@@ -177,11 +159,6 @@ function captureSlideKeyFast(){
 }
 
 /* ---------- Slide change wiring ---------- */
-let __NIS_LINK_AUTO_TIMER = null;
-function linkAutoClear(){
-  if(__NIS_LINK_AUTO_TIMER){ clearTimeout(__NIS_LINK_AUTO_TIMER); __NIS_LINK_AUTO_TIMER=null; }
-}
-
 function wireSlideChange(){
   try{
     if(!(Office && Office.context && Office.context.document && Office.EventType)) return;
@@ -191,7 +168,7 @@ function wireSlideChange(){
     Office.context.document.addHandlerAsync(
       Office.EventType.DocumentSelectionChanged,
       async ()=>{
-        // persist old slide + clear timers
+        // persist old slide + clear auto-advance timer
         persistCurrentSlide();
         linkAutoClear();
 
@@ -199,7 +176,7 @@ function wireSlideChange(){
         const prev = getUIParams();
         if(prev.stopOnChange){
           const e = getActiveEngine();
-          e?.stop?.();
+          if(e && e.stop) e.stop();
         }
 
         const k = await captureSlideKeyFast();
@@ -209,30 +186,6 @@ function wireSlideChange(){
         lastSlideKey = k;
         __NIS_ACTIVE_SLIDE_KEY = k;
 
-        // --- INHERIT (first visit) if requested ---
-        if(__NIS_INHERIT_NEXT && __NIS_INHERIT_NEXT.from){
-          const fromKey = __NIS_INHERIT_NEXT.from;
-          __NIS_INHERIT_NEXT = null; // consume flag
-
-          const hasScene = NISPersist.loadScene(k);
-          const linkCfg  = __NIS_LINK_CACHE.get(fromKey) || linkLoad(fromKey);
-
-          if(!hasScene && linkCfg?.inherit){
-            const src = __NIS_STATE_CACHE.get(fromKey) || NISPersist.loadScene(fromKey) || {...NIS_DEFAULT_PARAMS};
-            NISPersist.saveScene(k, src);
-            __NIS_STATE_CACHE.set(k, {...src});
-          }
-
-          if(linkCfg?.inheritNm){
-            const tgtStyle = nmLoadStyleForSlideKey(k);
-            if(!tgtStyle){
-              const srcStyle = nmLoadStyleForSlideKey(fromKey);
-              if(srcStyle) nmSaveStyleForSlideKey(k, srcStyle);
-            }
-          }
-        }
-        // -------------------------------------------
-
         getActiveEngine();
         restoreCurrentSlide();
         nmInit();
@@ -241,7 +194,7 @@ function wireSlideChange(){
         const cur = getUIParams();
         if(cur.autoStart){
           const e = getActiveEngine();
-          e?.start?.();
+          if(e && e.start) e.start();
           linkAutoArmForActive(); // arm auto-advance if enabled
         }
       }
@@ -262,7 +215,6 @@ function drawPreview(ctx,state){
 }
 
 function createInternalEngine(slideKey){
-  // ensure we have a <canvas id="preview"> even لو الموجود DIV
   let host = q('preview'); 
   let canvas = host;
   if(!canvas || typeof canvas.getContext !== 'function'){
@@ -326,7 +278,9 @@ function applyPreset(name){
   else if(name==='fast'){ setUIParams({speed:85,capacity:320,delay:0.3}); }
   persistCurrentSlide();
   const e=getActiveEngine(), p=getUIParams();
-  e?.setSpeed?.(p.speed); e?.setCapacity?.(p.capacity); e?.setDelay?.(p.delay);
+  if(e&&e.setSpeed)e.setSpeed(p.speed);
+  if(e&&e.setCapacity)e.setCapacity(p.capacity);
+  if(e&&e.setDelay)e.setDelay(p.delay);
 }
 
 function bindSimUI(){
@@ -360,7 +314,16 @@ function bindSimUI(){
   if(pngBtn){  pngBtn .addEventListener('click',()=>{ const e=getActiveEngine(); e?.download?.(); }); }
 }
 
-/* ---------- Project/export helpers (restored) ---------- */
+/* ---------- Host hint ---------- */
+function setHostHint(){
+  const h=q('hostHint'); if(!h) return;
+  try{
+    if(hostIsOffice()) h.textContent='Host: '+Office.context.host+(hostIsPowerPoint()?' (projection enabled)':'');
+    else h.textContent='Host: Browser preview';
+  }catch(e){ h.textContent='Host: Browser'; }
+}
+
+/* ---------- Project/export helpers ---------- */
 function projectCanvas(canvas){
   try{
     const dataUrl=canvas.toDataURL('image/png');
@@ -388,7 +351,7 @@ function downloadPNG(){
   }
 }
 
-/* ---------- Nano Mode ---------- */
+/* ---------- Nano Mode (unchanged) ---------- */
 function nmGetStyle(){
   try{
     const key=nmStyleKey(__NIS_ACTIVE_SLIDE_KEY);
@@ -470,7 +433,7 @@ function bindNanoUI(){
 }
 function nmInit(){ const s=nmGetStyle(); nmWriteInputs(s); }
 
-/* ---------- Linked Sequence (MVP + Auto-advance + Inherit) ---------- */
+/* ---------- Linked Sequence (MVP + Auto-advance) ---------- */
 /* Storage */
 function linkLoad(k){
   const persisted = NISPersist.loadLink(k);
@@ -479,19 +442,13 @@ function linkLoad(k){
       enabled: !!persisted.enabled,
       next: persisted.next || null,
       auto: !!persisted.auto,
-      autoMs: Number(persisted.autoMs||3000),
-      inherit: !!persisted.inherit,
-      inheritNm: !!persisted.inheritNm
+      autoMs: Number(persisted.autoMs||3000)
     };
   }
-  return {enabled:false, next:null, auto:false, autoMs:3000, inherit:false, inheritNm:false};
+  return {enabled:false, next:null, auto:false, autoMs:3000};
 }
 function linkSave(k, data){
-  const clean={
-    enabled:!!data.enabled, next:data.next||null,
-    auto:!!data.auto, autoMs:Number(data.autoMs||3000),
-    inherit:!!data.inherit, inheritNm:!!data.inheritNm
-  };
+  const clean={enabled:!!data.enabled, next:data.next||null, auto:!!data.auto, autoMs:Number(data.autoMs||3000)};
   __NIS_LINK_CACHE.set(k, clean);
   NISPersist.saveLink(k, clean);
 }
@@ -499,6 +456,7 @@ function linkSave(k, data){
 /* UI helpers */
 async function linkPopulateDropdown(){
   const sel=q('linkNext'); if(!sel) return;
+  // reset
   sel.innerHTML='<option value="">— None —</option>';
   if(!hostIsPowerPoint() || !(window.PowerPoint&&PowerPoint.run)){
     const hint=q('linkHint'); if(hint) hint.textContent='(PowerPoint API not available)';
@@ -525,28 +483,26 @@ function linkWriteToUI(k){
   const state = __NIS_LINK_CACHE.get(k) || linkLoad(k);
   __NIS_LINK_CACHE.set(k,state);
   const en=q('linkEnable'), nextSel=q('linkNext'), au=q('linkAuto'), auMs=q('linkAutoMs');
-  const inh=q('linkInherit'), inhNm=q('linkInheritNm');
   if(en) en.checked=!!state.enabled;
   if(nextSel){ nextSel.value = state.next || ""; }
   if(au) au.checked=!!state.auto;
   if(auMs) auMs.value=String(Number(state.autoMs||3000));
-  if(inh) inh.checked=!!state.inherit;
-  if(inhNm) inhNm.checked=!!state.inheritNm;
 }
 function linkReadFromUI(){
   const en=q('linkEnable'), nextSel=q('linkNext'), au=q('linkAuto'), auMs=q('linkAutoMs');
-  const inh=q('linkInherit'), inhNm=q('linkInheritNm');
   return { 
     enabled: !!(en && en.checked), 
     next: (nextSel && nextSel.value) ? nextSel.value : null,
     auto: !!(au && au.checked),
-    autoMs: Number(auMs && auMs.value ? auMs.value : 3000),
-    inherit: !!(inh && inh.checked),
-    inheritNm: !!(inhNm && inhNm.checked)
+    autoMs: Number(auMs && auMs.value ? auMs.value : 3000)
   };
 }
 
 /* Auto-advance timer (per active slide) */
+let __NIS_LINK_AUTO_TIMER = null;
+function linkAutoClear(){
+  if(__NIS_LINK_AUTO_TIMER){ clearTimeout(__NIS_LINK_AUTO_TIMER); __NIS_LINK_AUTO_TIMER=null; }
+}
 function linkAutoArmForActive(){
   linkAutoClear();
   const k=__NIS_ACTIVE_SLIDE_KEY; if(!k) return;
@@ -558,13 +514,11 @@ function linkAutoArmForActive(){
     await linkAdvanceFrom(k);
   }, ms);
 }
+
 async function linkAdvanceFrom(k){
   const st = __NIS_LINK_CACHE.get(k) || linkLoad(k);
   if(!st.enabled || !st.next) return false;
   if(!(window.PowerPoint&&PowerPoint.run)) return false;
-
-  // mark to inherit on first visit if flags enabled
-  __NIS_INHERIT_NEXT = st.inherit || st.inheritNm ? {from:k} : null;
 
   try{
     await PowerPoint.run(async (ctx)=>{
@@ -574,7 +528,6 @@ async function linkAdvanceFrom(k){
     return true;
   }catch(e){
     const hint=q('linkHint'); if(hint) hint.textContent='(Advance failed)';
-    __NIS_INHERIT_NEXT = null;
     return false;
   }
 }
@@ -583,28 +536,28 @@ async function linkAdvanceFrom(k){
 function bindLinkUI(){
   const en=q('linkEnable'), nextSel=q('linkNext');
   const play=q('linkPlay'), adv=q('linkAdvance'), hint=q('linkHint');
-  const au=q('linkAuto'), auMs=q('linkAutoMs'), inh=q('linkInherit'), inhNm=q('linkInheritNm');
+  const au=q('linkAuto'), auMs=q('linkAutoMs');
 
-  const onSave=()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; };
+  if(en){ en.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
+  if(nextSel){ nextSel.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
+  if(au){ au.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
+  if(auMs){ auMs.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
 
-  en?.addEventListener('change', onSave);
-  nextSel?.addEventListener('change', onSave);
-  au?.addEventListener('change', onSave);
-  auMs?.addEventListener('change', onSave);
-  inh?.addEventListener('change', onSave);
-  inhNm?.addEventListener('change', onSave);
-
-  play?.addEventListener('click',()=>{
-    const cur=getUIParams();
-    if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }
-    if(hint) hint.textContent='Sequence ready — auto/advance as set.';
-  });
-  adv?.addEventListener('click', async ()=>{
-    linkAutoClear();
-    const ok = await linkAdvanceFrom(__NIS_ACTIVE_SLIDE_KEY);
-    if(!ok){ if(hint) hint.textContent='No next slide set for this slide.'; }
-    else{ if(hint) hint.textContent='Advanced.'; }
-  });
+  if(play){
+    play.addEventListener('click',()=>{
+      const cur=getUIParams();
+      if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }
+      if(hint) hint.textContent='Sequence ready — use auto-advance or "Advance now".';
+    });
+  }
+  if(adv){
+    adv.addEventListener('click', async ()=>{
+      linkAutoClear();
+      const ok = await linkAdvanceFrom(__NIS_ACTIVE_SLIDE_KEY);
+      if(!ok){ if(hint) hint.textContent='No next slide set for this slide.'; }
+      else{ if(hint) hint.textContent='Advanced.'; }
+    });
+  }
 }
 
 /* Restore for current slide */
@@ -635,13 +588,16 @@ function initBoot(){
 
   const e=getActiveEngine(); e?.reset?.();
 
-  // Shortcuts: Ctrl+Alt+S toggle, Ctrl+Alt+Right advance
+  /* Simple keyboard shortcuts (optional):
+     Ctrl+Alt+S => Start/Stop toggle,  Ctrl+Alt+Right => Advance now */
   document.addEventListener('keydown', (ev)=>{
     if(!(ev.ctrlKey && ev.altKey)) return;
     if(ev.code==='KeyS'){
       ev.preventDefault();
+      const e=getActiveEngine();
+      // naive toggle: try stop then start
       linkAutoClear();
-      const e=getActiveEngine(); e?.stop?.(); setTimeout(()=>{ e?.start?.(); linkAutoArmForActive(); },0);
+      e?.stop?.(); setTimeout(()=>{ e?.start?.(); linkAutoArmForActive(); },0);
     }else if(ev.code==='ArrowRight'){
       ev.preventDefault();
       linkAutoClear();
