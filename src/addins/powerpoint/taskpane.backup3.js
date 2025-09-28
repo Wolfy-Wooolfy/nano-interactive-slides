@@ -1,4 +1,4 @@
-/* ======== Nano Interactive Slides - taskpane.js (fast + defaults per-slide) ======== */
+/* ======== Nano Interactive Slides - taskpane.js (fast) ======== */
 
 /* Keys */
 const NIS_KEY_PREFIX = 'NIS:scene:'; 
@@ -6,23 +6,12 @@ function nisKey(k){ return NIS_KEY_PREFIX + k; }
 const NIS_STYLE_KEY_PREFIX='NIS:style:'; 
 function nmStyleKey(slideKey){ return NIS_STYLE_KEY_PREFIX + (slideKey||'default'); }
 
-/* Defaults for Simulation Controls (per slide) */
-const NIS_DEFAULT_PARAMS = Object.freeze({
-  speed: 50,
-  capacity: 100,
-  delay: 1,
-  projectToSlide: false,
-  projectMs: 1000,
-  autoStart: false,
-  stopOnChange: false
-});
-
 /* Fast in-memory cache for per-slide UI state */
-const __NIS_STATE_CACHE = new Map();   // slideKey -> last UI params (plain object)
+const __NIS_STATE_CACHE = new Map();   // slideKey -> last UI params
 
-/* Debounced save to avoid UI jank (150ms) */
+/* Debounced save to avoid UI jank */
 let __nisSaveTimer=null, __nisSavePending=false;
-function nisScheduleSave(delayMs=150){
+function nisScheduleSave(delayMs=200){
   if(__nisSaveTimer){ __nisSavePending=true; return; }
   __nisSaveTimer=setTimeout(()=>{
     try{ Office.context.document.settings.saveAsync(()=>{}); }catch(e){}
@@ -104,33 +93,19 @@ function setUIParams(p){
   }
 }
 
-/* Persist / Restore (with per-slide defaults & in-memory instant hydrate) */
+/* Persist / Restore (with in-memory instant hydrate) */
 function persistCurrentSlide(){
   if(!__NIS_ACTIVE_SLIDE_KEY) return;
   const p = getUIParams();
-  __NIS_STATE_CACHE.set(__NIS_ACTIVE_SLIDE_KEY, {...p});   // store a copy
+  __NIS_STATE_CACHE.set(__NIS_ACTIVE_SLIDE_KEY, p);   // instant reuse
   NISPersist.save(__NIS_ACTIVE_SLIDE_KEY, p);
 }
 function restoreCurrentSlide(){
   if(!__NIS_ACTIVE_SLIDE_KEY) return;
-
-  // 1) instant from cache if exists
   const cached = __NIS_STATE_CACHE.get(__NIS_ACTIVE_SLIDE_KEY);
-  if(cached) setUIParams(cached);
-
-  // 2) try persisted settings
-  const persisted = NISPersist.load(__NIS_ACTIVE_SLIDE_KEY);
-  if(persisted){
-    setUIParams(persisted);
-    __NIS_STATE_CACHE.set(__NIS_ACTIVE_SLIDE_KEY, {...persisted});
-    return;
-  }
-
-  // 3) first time this slide is seen → initialize defaults per slide
-  const defaults = {...NIS_DEFAULT_PARAMS};
-  setUIParams(defaults);
-  __NIS_STATE_CACHE.set(__NIS_ACTIVE_SLIDE_KEY, {...defaults});
-  NISPersist.save(__NIS_ACTIVE_SLIDE_KEY, defaults);
+  if(cached) setUIParams(cached);                      // instant
+  const s = NISPersist.load(__NIS_ACTIVE_SLIDE_KEY);   // confirm from settings
+  if(s) setUIParams(s);
 }
 
 /* Fast slide id: race PPT API vs SlideRange (take the first) */
@@ -194,7 +169,7 @@ function wireSlideChange(){
         lastSlideKey = k;
         __NIS_ACTIVE_SLIDE_KEY = k;
 
-        // ensure engine + restore (cache → settings → defaults)
+        // ensure engine + instant restore from cache, then settings
         getActiveEngine();
         restoreCurrentSlide();
         nmInit();
@@ -234,7 +209,7 @@ function createInternalEngine(slideKey){
   const ctx = canvas.getContext('2d');
 
   let running=false, tm=null, lastProject=0;
-  let state={ ...NIS_DEFAULT_PARAMS, x:40 };
+  let state={ speed:50, capacity:100, delay:1, projectToSlide:false, projectMs:1000, x:40 };
 
   const step=()=>{
     if(!running) return;
@@ -260,7 +235,7 @@ function createInternalEngine(slideKey){
     setDelay(v){ state.delay=v; },
     setProjectToSlide(v){ state.projectToSlide=!!v; },
     setProjectMs(v){ state.projectMs=Number(v)||1000; },
-    reset(){ state={ ...NIS_DEFAULT_PARAMS, x:40 }; 
+    reset(){ state={ speed:50, capacity:100, delay:1, projectToSlide:false, projectMs:1000, x:40 }; 
              if(__NIS_ACTIVE_SLIDE_KEY===slideKey) drawPreview(ctx,state); },
     snapshot(){ if(__NIS_ACTIVE_SLIDE_KEY===slideKey){ drawPreview(ctx,state); if(hostIsPowerPoint()) projectCanvas(canvas); } },
     download(){ downloadPNG(); },
@@ -279,7 +254,7 @@ function getActiveEngine(){
   return EngineRegistry.get(__NIS_ACTIVE_SLIDE_KEY, createEngineForSlide);
 }
 
-/* ---------- Simulation UI bindings (sliders: input=live, change=save) ---------- */
+/* ---------- Simulation UI bindings ---------- */
 function applyPreset(name){
   if(name==='slow'){ setUIParams({speed:20,capacity:120,delay:2}); }
   else if(name==='normal'){ setUIParams({speed:50,capacity:200,delay:1}); }
@@ -302,33 +277,14 @@ function bindSimUI(){
 
   if(startBtn){ startBtn.addEventListener('click',()=>{ const e=getActiveEngine(); if(e&&e.start)e.start(); }); }
   if(stopBtn){  stopBtn .addEventListener('click',()=>{ const e=getActiveEngine(); if(e&&e.stop) e.stop();  }); }
-  if(resetBtn){ resetBtn.addEventListener('click',()=>{ setUIParams({...NIS_DEFAULT_PARAMS}); const e=getActiveEngine(); if(e&&e.reset)e.reset(); persistCurrentSlide(); }); }
+  if(resetBtn){ resetBtn.addEventListener('click',()=>{ setUIParams({speed:50,capacity:100,delay:1}); const e=getActiveEngine(); if(e&&e.reset)e.reset(); persistCurrentSlide(); }); }
 
-  // speed: live on input, save on change
-  if(s){
-    s.addEventListener('input',()=>{ const v=+s.value; if(sv) sv.textContent=String(v); const e=getActiveEngine(); e?.setSpeed?.(v); });
-    s.addEventListener('change',()=>{ persistCurrentSlide(); });
-  }
-  // capacity
-  if(c){
-    c.addEventListener('input',()=>{ const v=+c.value; if(cv) cv.textContent=String(v); const e=getActiveEngine(); e?.setCapacity?.(v); });
-    c.addEventListener('change',()=>{ persistCurrentSlide(); });
-  }
-  // delay
-  if(d){
-    d.addEventListener('input',()=>{ const v=+d.value; if(dv) dv.textContent=String(v); const e=getActiveEngine(); e?.setDelay?.(v); });
-    d.addEventListener('change',()=>{ persistCurrentSlide(); });
-  }
+  if(s){ s.addEventListener('input',()=>{ const v=Number(s.value); if(sv) sv.textContent=String(v); const e=getActiveEngine(); if(e&&e.setSpeed)e.setSpeed(v); persistCurrentSlide(); }); }
+  if(c){ c.addEventListener('input',()=>{ const v=Number(c.value); if(cv) cv.textContent=String(v); const e=getActiveEngine(); if(e&&e.setCapacity)e.setCapacity(v); persistCurrentSlide(); }); }
+  if(d){ d.addEventListener('input',()=>{ const v=Number(d.value); if(dv) dv.textContent=String(v); const e=getActiveEngine(); if(e&&e.setDelay)e.setDelay(v); persistCurrentSlide(); }); }
 
-  // project toggle: update & save on change
-  if(pt){
-    pt.addEventListener('change',()=>{ const v=!!pt.checked; const e=getActiveEngine(); e?.setProjectToSlide?.(v); persistCurrentSlide(); });
-  }
-  // project ms: live on input, save on change
-  if(pm){
-    pm.addEventListener('input',()=>{ const v=Number(pm.value)||1000; const e=getActiveEngine(); e?.setProjectMs?.(v); });
-    pm.addEventListener('change',()=>{ persistCurrentSlide(); });
-  }
+  if(pt){ pt.addEventListener('change',()=>{ const v=!!pt.checked; const e=getActiveEngine(); if(e&&e.setProjectToSlide)e.setProjectToSlide(v); persistCurrentSlide(); }); }
+  if(pm){ pm.addEventListener('input',()=>{ const v=Number(pm.value)||1000; const e=getActiveEngine(); if(e&&e.setProjectMs)e.setProjectMs(v); persistCurrentSlide(); }); }
 
   if(snapBtn){ snapBtn.addEventListener('click',()=>{ const e=getActiveEngine(); if(e&&e.snapshot)e.snapshot(); }); }
   if(expBtn){  expBtn .addEventListener('click',()=>{ const e=getActiveEngine(); if(e&&e.export) e.export();  }); }
@@ -471,7 +427,7 @@ function initBoot(){
   captureSlideKeyFast().then(k=>{
     __NIS_ACTIVE_SLIDE_KEY=k;
     getActiveEngine();
-    restoreCurrentSlide();   // cache → settings → defaults (and persist defaults)
+    restoreCurrentSlide();
     nmInit();
     const cur=getUIParams();
     if(cur.autoStart){ const e=getActiveEngine(); if(e&&e.start)e.start(); }
