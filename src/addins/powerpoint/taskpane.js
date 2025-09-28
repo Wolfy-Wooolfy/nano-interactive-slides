@@ -1,4 +1,4 @@
-/* ======== Nano Interactive Slides - taskpane.js (per-slide, fast, linked sequence MVP) ======== */
+/* ======== Nano Interactive Slides - taskpane.js (per-slide, fast, linked sequence + auto-advance) ======== */
 
 /* ---------- Keys ---------- */
 const NIS_KEY_PREFIX = 'NIS:scene:'; 
@@ -7,7 +7,7 @@ function nisKey(k){ return NIS_KEY_PREFIX + k; }
 const NIS_STYLE_KEY_PREFIX='NIS:style:'; 
 function nmStyleKey(slideKey){ return NIS_STYLE_KEY_PREFIX + (slideKey||'default'); }
 
-const NIS_LINK_KEY_PREFIX='NIS:link:'; // per-slide link settings {enabled:boolean,next:string|null}
+const NIS_LINK_KEY_PREFIX='NIS:link:'; // per-slide link settings {enabled,next,auto,autoMs}
 
 /* ---------- Defaults (Simulation Controls) ---------- */
 const NIS_DEFAULT_PARAMS = Object.freeze({
@@ -22,7 +22,7 @@ const NIS_DEFAULT_PARAMS = Object.freeze({
 
 /* ---------- Fast in-memory cache ---------- */
 const __NIS_STATE_CACHE = new Map();   // slideKey -> params
-const __NIS_LINK_CACHE  = new Map();   // slideKey -> {enabled,next}
+const __NIS_LINK_CACHE  = new Map();   // slideKey -> {enabled,next,auto,autoMs}
 
 /* ---------- Debounced settings save (150ms) ---------- */
 let __nisSaveTimer=null, __nisSavePending=false;
@@ -168,8 +168,9 @@ function wireSlideChange(){
     Office.context.document.addHandlerAsync(
       Office.EventType.DocumentSelectionChanged,
       async ()=>{
-        // persist old slide
+        // persist old slide + clear auto-advance timer
         persistCurrentSlide();
+        linkAutoClear();
 
         // stop engine if requested
         const prev = getUIParams();
@@ -194,6 +195,7 @@ function wireSlideChange(){
         if(cur.autoStart){
           const e = getActiveEngine();
           if(e && e.start) e.start();
+          linkAutoArmForActive(); // arm auto-advance if enabled
         }
       }
     );
@@ -290,8 +292,8 @@ function bindSimUI(){
   const d=q('delay'), dv=q('delayVal');
   const pt=q('projectToggle'), pm=q('projectMs');
 
-  if(startBtn){ startBtn.addEventListener('click',()=>{ const e=getActiveEngine(); e?.start?.(); }); }
-  if(stopBtn){  stopBtn .addEventListener('click',()=>{ const e=getActiveEngine(); e?.stop?.();  }); }
+  if(startBtn){ startBtn.addEventListener('click',()=>{ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }); }
+  if(stopBtn){  stopBtn .addEventListener('click',()=>{ const e=getActiveEngine(); e?.stop?.();  linkAutoClear(); }); }
   if(resetBtn){ resetBtn.addEventListener('click',()=>{ setUIParams({...NIS_DEFAULT_PARAMS}); const e=getActiveEngine(); e?.reset?.(); persistCurrentSlide(); }); }
 
   if(s){ s.addEventListener('input',()=>{ const v=+s.value; if(sv) sv.textContent=String(v); const e=getActiveEngine(); e?.setSpeed?.(v); });
@@ -431,16 +433,24 @@ function bindNanoUI(){
 }
 function nmInit(){ const s=nmGetStyle(); nmWriteInputs(s); }
 
-/* ---------- Linked Sequence (MVP) ---------- */
+/* ---------- Linked Sequence (MVP + Auto-advance) ---------- */
 /* Storage */
 function linkLoad(k){
   const persisted = NISPersist.loadLink(k);
-  if(persisted && typeof persisted==='object') return {enabled:!!persisted.enabled, next: persisted.next||null};
-  return {enabled:false, next:null};
+  if(persisted && typeof persisted==='object'){
+    return {
+      enabled: !!persisted.enabled,
+      next: persisted.next || null,
+      auto: !!persisted.auto,
+      autoMs: Number(persisted.autoMs||3000)
+    };
+  }
+  return {enabled:false, next:null, auto:false, autoMs:3000};
 }
 function linkSave(k, data){
-  __NIS_LINK_CACHE.set(k, {enabled:!!data.enabled, next:data.next||null});
-  NISPersist.saveLink(k, {enabled:!!data.enabled, next:data.next||null});
+  const clean={enabled:!!data.enabled, next:data.next||null, auto:!!data.auto, autoMs:Number(data.autoMs||3000)};
+  __NIS_LINK_CACHE.set(k, clean);
+  NISPersist.saveLink(k, clean);
 }
 
 /* UI helpers */
@@ -456,7 +466,6 @@ async function linkPopulateDropdown(){
     await PowerPoint.run(async (ctx)=>{
       const coll = ctx.presentation.slides;
       coll.load("items"); await ctx.sync();
-      // Load ids & index in a second pass for safety
       coll.items.forEach(s=>s.load("id,index")); 
       await ctx.sync();
       coll.items.forEach(sl=>{
@@ -473,13 +482,37 @@ async function linkPopulateDropdown(){
 function linkWriteToUI(k){
   const state = __NIS_LINK_CACHE.get(k) || linkLoad(k);
   __NIS_LINK_CACHE.set(k,state);
-  const en=q('linkEnable'), nextSel=q('linkNext');
+  const en=q('linkEnable'), nextSel=q('linkNext'), au=q('linkAuto'), auMs=q('linkAutoMs');
   if(en) en.checked=!!state.enabled;
   if(nextSel){ nextSel.value = state.next || ""; }
+  if(au) au.checked=!!state.auto;
+  if(auMs) auMs.value=String(Number(state.autoMs||3000));
 }
 function linkReadFromUI(){
-  const en=q('linkEnable'), nextSel=q('linkNext');
-  return { enabled: !!(en && en.checked), next: (nextSel && nextSel.value) ? nextSel.value : null };
+  const en=q('linkEnable'), nextSel=q('linkNext'), au=q('linkAuto'), auMs=q('linkAutoMs');
+  return { 
+    enabled: !!(en && en.checked), 
+    next: (nextSel && nextSel.value) ? nextSel.value : null,
+    auto: !!(au && au.checked),
+    autoMs: Number(auMs && auMs.value ? auMs.value : 3000)
+  };
+}
+
+/* Auto-advance timer (per active slide) */
+let __NIS_LINK_AUTO_TIMER = null;
+function linkAutoClear(){
+  if(__NIS_LINK_AUTO_TIMER){ clearTimeout(__NIS_LINK_AUTO_TIMER); __NIS_LINK_AUTO_TIMER=null; }
+}
+function linkAutoArmForActive(){
+  linkAutoClear();
+  const k=__NIS_ACTIVE_SLIDE_KEY; if(!k) return;
+  const st = __NIS_LINK_CACHE.get(k) || linkLoad(k);
+  if(!st.enabled || !st.next || !st.auto) return;
+  const ms = Math.max(200, Number(st.autoMs||3000));
+  __NIS_LINK_AUTO_TIMER = setTimeout(async ()=>{
+    __NIS_LINK_AUTO_TIMER=null;
+    await linkAdvanceFrom(k);
+  }, ms);
 }
 
 async function linkAdvanceFrom(k){
@@ -489,7 +522,6 @@ async function linkAdvanceFrom(k){
 
   try{
     await PowerPoint.run(async (ctx)=>{
-      // select the "next" slide by id
       ctx.presentation.setSelectedSlides([st.next]); // API set 1.5
       await ctx.sync();
     });
@@ -504,20 +536,23 @@ async function linkAdvanceFrom(k){
 function bindLinkUI(){
   const en=q('linkEnable'), nextSel=q('linkNext');
   const play=q('linkPlay'), adv=q('linkAdvance'), hint=q('linkHint');
+  const au=q('linkAuto'), auMs=q('linkAutoMs');
 
   if(en){ en.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
   if(nextSel){ nextSel.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
+  if(au){ au.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
+  if(auMs){ auMs.addEventListener('change',()=>{ if(!__NIS_ACTIVE_SLIDE_KEY) return; const cur=linkReadFromUI(); linkSave(__NIS_ACTIVE_SLIDE_KEY,cur); if(hint) hint.textContent='Saved.'; }); }
 
   if(play){
     play.addEventListener('click',()=>{
-      // فكرة الـ MVP: نبدأ من السلايد الحالية ونشغّلها (لو Auto-Start متفعّل)، والتقدّم يكون بزر Advance now
       const cur=getUIParams();
-      if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); }
-      if(hint) hint.textContent='Sequence started — use "Advance now".';
+      if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }
+      if(hint) hint.textContent='Sequence ready — use auto-advance or "Advance now".';
     });
   }
   if(adv){
     adv.addEventListener('click', async ()=>{
+      linkAutoClear();
       const ok = await linkAdvanceFrom(__NIS_ACTIVE_SLIDE_KEY);
       if(!ok){ if(hint) hint.textContent='No next slide set for this slide.'; }
       else{ if(hint) hint.textContent='Advanced.'; }
@@ -545,13 +580,30 @@ function initBoot(){
     linkRestoreForSlide();
 
     const cur=getUIParams();
-    if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); }
+    if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }
   });
 
   wireSlideChange();
   setHostHint();
 
   const e=getActiveEngine(); e?.reset?.();
+
+  /* Simple keyboard shortcuts (optional):
+     Ctrl+Alt+S => Start/Stop toggle,  Ctrl+Alt+Right => Advance now */
+  document.addEventListener('keydown', (ev)=>{
+    if(!(ev.ctrlKey && ev.altKey)) return;
+    if(ev.code==='KeyS'){
+      ev.preventDefault();
+      const e=getActiveEngine();
+      // naive toggle: try stop then start
+      linkAutoClear();
+      e?.stop?.(); setTimeout(()=>{ e?.start?.(); linkAutoArmForActive(); },0);
+    }else if(ev.code==='ArrowRight'){
+      ev.preventDefault();
+      linkAutoClear();
+      linkAdvanceFrom(__NIS_ACTIVE_SLIDE_KEY);
+    }
+  });
 }
 
 if(window.Office && Office.onReady){
