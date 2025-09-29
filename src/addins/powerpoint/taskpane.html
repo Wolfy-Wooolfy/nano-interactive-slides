@@ -20,64 +20,132 @@
     .half{display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .title{margin:0 0 8px 0}
     .inputs{display:grid;gap:8px}
+    .inline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    progress{width:160px;height:12px}
+    #nmBusy{font-size:12px;color:#555}
   </style>
+
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <!-- مزوّد الصور (اختياري). لازم يكون قبل taskpane.js -->
-  <script src="./nano-image-provider.js"></script>
+
+  <!-- CANONICAL: src/addins/powerpoint/taskpane.html -->
+  <!-- Nano image provider (inline) — يعمل مع أي سيرفر (Webpack/Vite) -->
+  <!-- NIS inline image provider (robust) -->
+<script>
+  (function () {
+    console.log("NIS inline provider: v2");
+    function inc(onProgress, p, m) { try { onProgress && onProgress(p, m || ""); } catch (_) {} }
+    function pickSize(a) { return a==="4:3"?{w:1024,h:768}:a==="1:1"?{w:1024,h:1024}:{w:1920,h:1080}; }
+
+    async function tryCall(url, body, signal) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal
+      });
+      if (!res.ok) throw new Error(`provider-${res.status}`);
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const data = ct.includes("application/json") ? await res.json() : JSON.parse(await res.text());
+      if (data && typeof data.base64 === "string" && data.base64.length > 100) return data;
+      throw new Error("provider-no-base64");
+    }
+
+    window.NIS_generateImage = async (style, onProgress, signal) => {
+      const s = pickSize((style && style.aspect) || "16:9");
+      const body = {
+        prompt: (String(style?.theme || "") + " " + String(style?.prompt || "")).trim(),
+        seed: Number(style?.seed || 0) || 0,
+        width: s.w,
+        height: s.h
+      };
+
+      inc(onProgress, 5, "Preparing");
+      let lastErr = null;
+
+      // 1) عبر Vite proxy (https://localhost:3000/nano/…)
+      try {
+        const data = await tryCall("/nano/generate", body, signal);
+        inc(onProgress, 100, "Done (proxy)");
+        return { base64: data.base64 };
+      } catch (e) {
+        lastErr = e;
+        console.warn("[NIS] proxy call failed:", e?.message || e);
+      }
+
+      // 2) محاولة مباشرة على 8787 (قد تمنعها Mixed-Content في بعض الإعدادات، لكن نحاول)
+      try {
+        const data = await tryCall("http://localhost:8787/nano/generate", body, signal);
+        inc(onProgress, 100, "Done (direct)");
+        return { base64: data.base64 };
+      } catch (e) {
+        lastErr = e;
+        console.warn("[NIS] direct call failed:", e?.message || e);
+      }
+
+      throw lastErr || new Error("provider-failed");
+    };
+  })();
+</script>
+
+<!-- اتركه كما هو -->
+<script defer src="./taskpane.js"></script>
+
+  <!-- تأكد إن التحميل ده موجود مرة واحدة فقط -->
   <script defer src="./taskpane.js"></script>
+  <link rel="icon" href="data:,">
 </head>
 <body>
   <h2>Nano Interactive Slides</h2>
 
   <div class="card" id="linkSeqCard">
-  <h3 style="margin-top:0">Linked Sequence (MVP)</h3>
+    <h3 style="margin-top:0">Linked Sequence (MVP)</h3>
+
+    <div class="row">
+      <label for="linkEnable" style="width:auto">
+        <input id="linkEnable" type="checkbox" />
+        Enable linked sequence on this slide
+      </label>
+    </div>
+
+    <div class="row">
+      <label for="linkNext">Next slide</label>
+      <select id="linkNext">
+        <option value="">— None —</option>
+      </select>
+    </div>
+
+    <div class="btns">
+      <button id="linkPlay">Play sequence from this slide</button>
+      <button id="linkAdvance">Advance now</button>
+      <span class="muted" id="linkHint"></span>
+    </div>
+  </div>
 
   <div class="row">
-    <label for="linkEnable" style="width:auto">
-      <input id="linkEnable" type="checkbox" />
-      Enable linked sequence on this slide
+    <label for="linkAuto" style="width:auto">
+      <input id="linkAuto" type="checkbox" />
+      Auto-advance while running
     </label>
   </div>
 
   <div class="row">
-    <label for="linkNext">Next slide</label>
-    <select id="linkNext">
-      <option value="">— None —</option>
-    </select>
+    <label for="linkAutoMs">Auto-advance after (ms)</label>
+    <input id="linkAutoMs" type="number" min="200" step="100" value="3000" />
   </div>
 
-  <div class="btns">
-    <button id="linkPlay">Play sequence from this slide</button>
-    <button id="linkAdvance">Advance now</button>
-    <span class="muted" id="linkHint"></span>
+  <div class="row">
+    <label for="linkInherit" style="width:auto">
+      <input id="linkInherit" type="checkbox" />
+      Copy Simulation settings to next slide on first visit
+    </label>
   </div>
-</div>
 
-<div class="row">
-  <label for="linkAuto" style="width:auto">
-    <input id="linkAuto" type="checkbox" />
-    Auto-advance while running
-  </label>
-</div>
-
-<div class="row">
-  <label for="linkAutoMs">Auto-advance after (ms)</label>
-  <input id="linkAutoMs" type="number" min="200" step="100" value="3000" />
-</div>
-
-<div class="row">
-  <label for="linkInherit" style="width:auto">
-    <input id="linkInherit" type="checkbox" />
-    Copy Simulation settings to next slide on first visit
-  </label>
-</div>
-
-<div class="row">
-  <label for="linkInheritNm" style="width:auto">
-    <input id="linkInheritNm" type="checkbox" />
-    Also copy Nano style (first visit only)
-  </label>
-</div>
+  <div class="row">
+    <label for="linkInheritNm" style="width:auto">
+      <input id="linkInheritNm" type="checkbox" />
+      Also copy Nano style (first visit only)
+    </label>
+  </div>
 
   <div class="grid">
     <div class="card">
@@ -103,9 +171,17 @@
             <option value="1:1">1:1 (1024×1024)</option>
           </select>
         </div>
-        <div id="nmBusy" style="display:none;font-size:12px;color:#555">Generating…</div>
+
+        <!-- Busy + Progress + Cancel -->
+        <div class="inline">
+          <div id="nmBusy" style="display:none">Generating…</div>
+          <progress id="nmProg" value="0" max="100" style="display:none"></progress>
+          <button id="nmCancel" style="display:none">Cancel</button>
+        </div>
+
         <div class="tog"><input id="nmCaption" type="checkbox" /><label for="nmCaption">Caption (debug only)</label></div>
       </div>
+
       <div class="btns" style="margin-top:8px">
         <button id="nmSave">Save Style</button>
         <button id="nmStyleSelected">Style Selected</button>

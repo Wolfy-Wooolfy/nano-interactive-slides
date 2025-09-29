@@ -3,17 +3,28 @@ import fs from "fs";
 import path from "path";
 
 const HOME = process.env.USERPROFILE || process.env.HOME;
-const CERTS = path.join(HOME, ".office-addin-dev-certs");
+const CERTS_DIR = path.join(HOME, ".office-addin-dev-certs");
+const keyPath = path.join(CERTS_DIR, "localhost.key");
+const certPath = path.join(CERTS_DIR, "localhost.crt");
+const hasCerts = fs.existsSync(keyPath) && fs.existsSync(certPath);
 
 export default defineConfig({
   server: {
-    https: {
-      key: fs.readFileSync(path.join(CERTS, "localhost.key")),
-      cert: fs.readFileSync(path.join(CERTS, "localhost.crt")),
+    port: 3000,           // مهم: نفس البورت اللي في manifest
+    strictPort: true,     // لو البورت مش فاضي يفشل بدل ما يبدّل لبورت تاني
+    https: hasCerts
+      ? {
+          key: fs.readFileSync(keyPath),
+          cert: fs.readFileSync(certPath),
+        }
+      : true,
+    proxy: {
+      "/nano": {
+        target: "http://localhost:8787",
+        changeOrigin: true,
+        secure: false,
+      },
     },
-    host: "localhost",
-    port: 3000,
-    strictPort: true
   },
-  build: { outDir: "dist", emptyOutDir: true }
+  build: { outDir: "dist", emptyOutDir: true },
 });

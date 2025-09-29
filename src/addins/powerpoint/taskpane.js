@@ -1,4 +1,11 @@
-/* ======== Nano Interactive Slides - taskpane.js (per-slide, fast, linked sequence + auto-advance + inherit + helpers restored) ======== */
+// --- guard: don't run twice ---
+if (window.__NIS_TASKPANE_JS__) {
+  console.debug("NIS: taskpane.js already loaded; skipping re-eval");
+} else {
+  window.__NIS_TASKPANE_JS__ = true;
+
+// ====== (كل كود الملف الحالي يبدأ من هنا كما هو) ======
+/* ======== Nano Interactive Slides - taskpane.js (per-slide + linked sequence + nano progress/cancel + caching) ======== */
 
 /* ---------- Keys ---------- */
 const NIS_KEY_PREFIX = 'NIS:scene:'; 
@@ -8,6 +15,9 @@ const NIS_STYLE_KEY_PREFIX='NIS:style:';
 function nmStyleKey(slideKey){ return NIS_STYLE_KEY_PREFIX + (slideKey||'default'); }
 
 const NIS_LINK_KEY_PREFIX='NIS:link:'; // {enabled,next,auto,autoMs,inherit,inheritNm}
+
+const NIS_IMG_CACHE_PREFIX='NIS:img:'; 
+function nmCacheKey(s){ return NIS_IMG_CACHE_PREFIX+[s.theme||'',s.prompt||'',String(s.seed||0),s.aspect||'16:9'].join('|'); }
 
 /* ---------- Defaults (Simulation Controls) ---------- */
 const NIS_DEFAULT_PARAMS = Object.freeze({
@@ -24,6 +34,7 @@ const NIS_DEFAULT_PARAMS = Object.freeze({
 const __NIS_STATE_CACHE = new Map();   // slideKey -> params
 const __NIS_LINK_CACHE  = new Map();   // slideKey -> link cfg
 let   __NIS_ACTIVE_SLIDE_KEY=null;
+let   __NIS_GEN_ABORT = null;          // AbortController أثناء توليد الصورة
 
 /* transient flag: when advancing via Linked Sequence, we may inherit on first visit */
 let __NIS_INHERIT_NEXT = null;
@@ -44,7 +55,9 @@ const NISPersist = {
   saveScene(k,d){ try{ Office.context.document.settings.set(nisKey(k), JSON.stringify(d)); nisScheduleSave(); }catch(e){} },
   loadScene(k){  try{ const r=Office.context.document.settings.get(nisKey(k)); return r?JSON.parse(r):null; }catch(e){ return null; } },
   saveLink(k,d){  try{ Office.context.document.settings.set(NIS_LINK_KEY_PREFIX+k, JSON.stringify(d)); nisScheduleSave(); }catch(e){} },
-  loadLink(k){   try{ const r=Office.context.document.settings.get(NIS_LINK_KEY_PREFIX+k); return r?JSON.parse(r):null; }catch(e){ return null; } }
+  loadLink(k){   try{ const r=Office.context.document.settings.get(NIS_LINK_KEY_PREFIX+k); return r?JSON.parse(r):null; }catch(e){ return null; } },
+  cacheGet(key){ try{ return Office.context.document.settings.get(key)||null; }catch(e){ return null; } },
+  cacheSet(key,v){ try{ Office.context.document.settings.set(key,v); nisScheduleSave(); }catch(e){} }
 };
 
 /* ---------- Engine Registry ---------- */
@@ -262,7 +275,7 @@ function drawPreview(ctx,state){
 }
 
 function createInternalEngine(slideKey){
-  // ensure we have a <canvas id="preview"> even لو الموجود DIV
+  // ensure we have a <canvas id="preview">
   let host = q('preview'); 
   let canvas = host;
   if(!canvas || typeof canvas.getContext !== 'function'){
@@ -319,16 +332,7 @@ function getActiveEngine(){
   return EngineRegistry.get(__NIS_ACTIVE_SLIDE_KEY, createEngineForSlide);
 }
 
-/* ---------- Simulation UI bindings (sliders: input=live, change=save) ---------- */
-function applyPreset(name){
-  if(name==='slow'){ setUIParams({speed:20,capacity:120,delay:2}); }
-  else if(name==='normal'){ setUIParams({speed:50,capacity:200,delay:1}); }
-  else if(name==='fast'){ setUIParams({speed:85,capacity:320,delay:0.3}); }
-  persistCurrentSlide();
-  const e=getActiveEngine(), p=getUIParams();
-  e?.setSpeed?.(p.speed); e?.setCapacity?.(p.capacity); e?.setDelay?.(p.delay);
-}
-
+/* ---------- Simulation UI bindings ---------- */
 function bindSimUI(){
   const startBtn=q('start'), stopBtn=q('stop'), resetBtn=q('reset');
   const snapBtn=q('snapshot'), expBtn=q('exportJson');
@@ -360,7 +364,7 @@ function bindSimUI(){
   if(pngBtn){  pngBtn .addEventListener('click',()=>{ const e=getActiveEngine(); e?.download?.(); }); }
 }
 
-/* ---------- Project/export helpers (restored) ---------- */
+/* ---------- Project/export helpers ---------- */
 function projectCanvas(canvas){
   try{
     const dataUrl=canvas.toDataURL('image/png');
@@ -388,7 +392,7 @@ function downloadPNG(){
   }
 }
 
-/* ---------- Nano Mode ---------- */
+/* ---------- Nano Mode (with Progress/Cancel/Cache) ---------- */
 function nmGetStyle(){
   try{
     const key=nmStyleKey(__NIS_ACTIVE_SLIDE_KEY);
@@ -423,6 +427,8 @@ function nmWriteInputs(s){
 }
 function nmHash(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
 function nmSize(aspect){ if(aspect==='4:3')return{w:1024,h:768}; if(aspect==='1:1')return{w:1024,h:1024}; return{w:1920,h:1080}; }
+
+/* Placeholder generator (fallback) */
 function nmGeneratePNG(style){
   const sz=nmSize(style.aspect||'16:9'); const w=sz.w,h=sz.h;
   const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d');
@@ -442,31 +448,105 @@ function nmGeneratePNG(style){
   }
   return c.toDataURL('image/png').split(',')[1];
 }
+
+/* UI helpers (busy/progress/cancel) */
+function nmShowBusy(on){
+  const busy=q('nmBusy'), prog=q('nmProg'), btnCancel=q('nmCancel');
+  ['nmStyleSelected','nmRegenSelected','nmSave'].forEach(id=>{ const b=q(id); if(b) b.disabled=on; });
+  if(busy) busy.style.display=on?'block':'none';
+  if(prog){ prog.style.display=on?'inline-block':'none'; if(!on){ prog.value=0; } }
+  if(btnCancel) btnCancel.style.display=on?'inline-block':'none';
+}
+function nmSetProgress(pct,msg){
+  const prog=q('nmProg'), hint=q('nmHint'), busy=q('nmBusy');
+  if(prog && typeof pct==='number'){ prog.value=Math.max(0,Math.min(100,Math.floor(pct))); }
+  if(busy) busy.textContent = msg ? ('Generating… '+msg) : 'Generating…';
+  if(hint && msg) hint.textContent = msg;
+}
 function nmApplyToSelection(base64){
   try{ Office.context.document.setSelectedDataAsync(base64,{coercionType:Office.CoercionType.Image},()=>{}); }catch(e){}
 }
-const NIS_IMG_CACHE_PREFIX='NIS:img:'; 
-function nmCacheKey(s){ return NIS_IMG_CACHE_PREFIX+[s.theme||'',s.prompt||'',String(s.seed||0),s.aspect||'16:9'].join('|'); }
-function nmCacheGet(key){ try{ const raw=Office.context.document.settings.get(key); return raw||null; }catch(e){ return null; } }
-function nmCacheSet(key,b64){ try{ Office.context.document.settings.set(key,b64); nisScheduleSave(); }catch(e){} }
-function showBusy(on){ const el=q('nmBusy'); if(el) el.style.display=on?'block':'none'; ['nmStyleSelected','nmRegenSelected'].forEach(id=>{const b=q(id); if(b) b.disabled=on;}); }
+
+/* Core generate with provider/timeout/cancel/cache */
 async function nmGenerate(style){
-  showBusy(true); const key=nmCacheKey(style);
+  const key=nmCacheKey(style);
+  nmShowBusy(true); nmSetProgress(0,'Starting');
   try{
-    const cached=nmCacheGet(key); if(cached) return cached;
-    if(typeof window.NIS_generateImage==='function'){
-      const res=await Promise.race([ window.NIS_generateImage(style), new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),45000)) ]);
-      if(typeof res==='string' && res.startsWith('data:image/')){ const b64=res.split(',')[1]; nmCacheSet(key,b64); return b64; }
-      if(res && typeof res.base64==='string'){ nmCacheSet(key,res.base64); return res.base64; }
+    const cached = NISPersist.cacheGet(key);
+    if(cached){ nmSetProgress(100,'Cached'); return cached; }
+
+    // Provider available?
+    const provider = typeof window.NIS_generateImage==='function' ? window.NIS_generateImage : null;
+
+    // Abort support
+    const ctrl = new AbortController();
+    __NIS_GEN_ABORT = ctrl;
+
+    // Progress callback (provider may ignore it)
+    const onProgress = (p,msg)=>{ try{ nmSetProgress(p,msg||''); }catch(e){} };
+
+    // Timeout race (45s)
+    const timeoutMs = 45000;
+    const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), timeoutMs));
+
+    let resBase64 = null;
+
+    if(provider){
+      const result = await Promise.race([
+        provider(style, onProgress, ctrl.signal),
+        timeout
+      ]);
+      if(typeof result === 'string' && result.startsWith('data:image/')){
+        resBase64 = result.split(',')[1];
+      }else if(result && typeof result.base64 === 'string'){
+        resBase64 = result.base64;
+      }
     }
-    const b64=nmGeneratePNG(style); nmCacheSet(key,b64); return b64;
-  }finally{ showBusy(false); }
+
+    // Fallback if provider missing أو رجّع فورغ
+    if(!resBase64){
+      onProgress(25,'Fallback generator');
+      resBase64 = nmGeneratePNG(style);
+    }
+
+    onProgress(90,'Caching');
+    NISPersist.cacheSet(key, resBase64);
+
+    onProgress(100,'Done');
+    return resBase64;
+  } finally {
+    __NIS_GEN_ABORT = null;
+    nmShowBusy(false);
+  }
 }
+
+/* Bind Nano UI */
 function bindNanoUI(){
   const save=q('nmSave'), styleSel=q('nmStyleSelected'), regen=q('nmRegenSelected'), hint=q('nmHint');
+  const btnCancel=q('nmCancel');
+
   if(save){ save.addEventListener('click',()=>{ const s=nmReadInputs(); nmSaveStyle(s); if(hint) hint.textContent='Style saved for this slide'; }); }
-  if(styleSel){ styleSel.addEventListener('click',async()=>{ const s=nmReadInputs(); nmSaveStyle(s); const b64=await nmGenerate(s); nmApplyToSelection(b64); if(hint) hint.textContent='Applied to selection'; }); }
-  if(regen){ regen.addEventListener('click',async()=>{ let s=nmReadInputs(); if(s.autoInc){ s.seed=(s.seed||0)+1; nmWriteInputs(s); } nmSaveStyle(s); const b64=await nmGenerate(s); nmApplyToSelection(b64); if(hint) hint.textContent=s.autoInc?'Next seed applied':'Re-generated with same seed'; }); }
+
+  if(styleSel){ styleSel.addEventListener('click',async()=>{
+    const s=nmReadInputs(); nmSaveStyle(s);
+    try{ const b64=await nmGenerate(s); nmApplyToSelection(b64); if(hint) hint.textContent='Applied to selection'; }
+    catch(err){ if(hint) hint.textContent=(err&&err.message==='timeout')?'Generation timeout.':'Generation failed.'; }
+  }); }
+
+  if(regen){ regen.addEventListener('click',async()=>{
+    let s=nmReadInputs();
+    if(s.autoInc){ s.seed=(s.seed||0)+1; nmWriteInputs(s); }
+    nmSaveStyle(s);
+    try{ const b64=await nmGenerate(s); nmApplyToSelection(b64); if(hint) hint.textContent=s.autoInc?'Next seed applied':'Re-generated with same seed'; }
+    catch(err){ if(hint) hint.textContent=(err&&err.message==='timeout')?'Generation timeout.':'Generation failed.'; }
+  }); }
+
+  if(btnCancel){ btnCancel.addEventListener('click',()=>{
+    try{
+      if(__NIS_GEN_ABORT) __NIS_GEN_ABORT.abort('user-cancel');
+      const h=q('nmHint'); if(h) h.textContent='Canceled.';
+    }catch(e){}
+  }); }
 }
 function nmInit(){ const s=nmGetStyle(); nmWriteInputs(s); }
 
@@ -659,3 +739,6 @@ if(window.Office && Office.onReady){
   if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', initBoot); }
   else { initBoot(); }
 }
+// ====== end of taskpane.js ======
+} // <--- close guard
+

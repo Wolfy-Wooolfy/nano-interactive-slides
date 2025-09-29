@@ -2,18 +2,22 @@
   "name": "nano-interactive-slides",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "workspaces": [
     "src/addins/*",
     "packages/*"
   ],
   "scripts": {
     "certs": "office-addin-dev-certs install",
+    "certs-install": "office-addin-dev-certs install",
+    "certs-uninstall": "office-addin-dev-certs uninstall",
     "start": "webpack serve --config webpack.config.js",
     "build": "webpack --config webpack.config.js",
     "dev-addin": "pnpm --dir src/addins/powerpoint dev",
     "start-addin": "office-addin-debugging start src/addins/powerpoint/manifest.xml",
     "stop-addin": "office-addin-debugging stop src/addins/powerpoint/manifest.xml",
-    "validate-addin": "office-addin-manifest validate src/addins/powerpoint/manifest.xml"
+    "validate-addin": "office-addin-manifest validate src/addins/powerpoint/manifest.xml",
+    "dev-nano-proxy": "node ./server/nano-proxy/index.js"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
@@ -31,6 +35,9 @@
     "webpack-dev-server": "^5.2.2"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   }
