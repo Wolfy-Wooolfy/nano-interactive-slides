@@ -121,6 +121,7 @@ function setUIParams(p){
     if(typeof p.projectMs==='number') e.setProjectMs?.(p.projectMs);
   }
 }
+nmAbortInFlight('slide-change');
 
 /* ---------- Scene persist / restore ---------- */
 function persistCurrentSlide(){
@@ -428,6 +429,45 @@ function nmWriteInputs(s){
 function nmHash(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
 function nmSize(aspect){ if(aspect==='4:3')return{w:1024,h:768}; if(aspect==='1:1')return{w:1024,h:1024}; return{w:1920,h:1080}; }
 
+// ---- Abort helper: cancel any in-flight generation safely ----
+function nmAbortInFlight(reason='user-cancel'){
+  try{
+    if(__NIS_GEN_ABORT){ __NIS_GEN_ABORT.abort(reason); __NIS_GEN_ABORT=null; }
+  }catch(e){}
+  nmShowBusy(false);
+  const h=q('nmHint');
+  if(h){
+    if(reason==='slide-change') h.textContent='Canceled (slide changed).';
+    else if(reason==='preempt') h.textContent='Canceled (new request started).';
+    else h.textContent='Canceled.';
+  }
+}
+
+// ---- Throttled progress to reduce UI jank ----
+let __nmProgTs = 0;
+function nmSetProgressThrottled(pct,msg){
+  const now = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
+  if(now - __nmProgTs < 50) return;  // ~20fps
+  __nmProgTs = now;
+  nmSetProgress(pct,msg);
+}
+
+// ---- Cache helpers ----
+function nmFindCachedForStyle(style){
+  try{
+    const key = nmCacheKey(style);
+    const b64 = NISPersist.cacheGet(key);
+    return b64 || null;
+  }catch(e){ return null; }
+}
+function nmShowCachedButton(style){
+  const btn = q('nmApplyCached'), hint=q('nmHint');
+  if(!btn) return;
+  const has = !!nmFindCachedForStyle(style);
+  btn.style.display = has ? 'inline-block' : 'none';
+  if(hint && has) hint.textContent = 'Cached image available for this style.';
+}
+
 /* Placeholder generator (fallback) */
 function nmGeneratePNG(style){
   const sz=nmSize(style.aspect||'16:9'); const w=sz.w,h=sz.h;
@@ -467,8 +507,9 @@ function nmApplyToSelection(base64){
   try{ Office.context.document.setSelectedDataAsync(base64,{coercionType:Office.CoercionType.Image},()=>{}); }catch(e){}
 }
 
-/* Core generate with provider/timeout/cancel/cache */
+/* Core generate with provider/timeout/cancel/cache (+ catch for canceled) */
 async function nmGenerate(style){
+  nmAbortInFlight('preempt');
   const key=nmCacheKey(style);
   nmShowBusy(true); nmSetProgress(0,'Starting');
   try{
@@ -483,7 +524,7 @@ async function nmGenerate(style){
     __NIS_GEN_ABORT = ctrl;
 
     // Progress callback (provider may ignore it)
-    const onProgress = (p,msg)=>{ try{ nmSetProgress(p,msg||''); }catch(e){} };
+    const onProgress = (p,msg)=>{ try{ nmSetProgressThrottled(p,msg||''); }catch(e){} };
 
     // Timeout race (45s)
     const timeoutMs = 45000;
@@ -496,6 +537,7 @@ async function nmGenerate(style){
         provider(style, onProgress, ctrl.signal),
         timeout
       ]);
+      if (ctrl.signal.aborted) throw new Error("canceled");
       if(typeof result === 'string' && result.startsWith('data:image/')){
         resBase64 = result.split(',')[1];
       }else if(result && typeof result.base64 === 'string'){
@@ -513,42 +555,67 @@ async function nmGenerate(style){
     NISPersist.cacheSet(key, resBase64);
 
     onProgress(100,'Done');
+    try{ nmShowCachedButton(style); }catch(e){}
     return resBase64;
-  } finally {
-    __NIS_GEN_ABORT = null;
-    nmShowBusy(false);
-  }
+  } catch(err){
+  const h=q('nmHint'); 
+  if(h) h.textContent=(err && err.message==="canceled") ? "Canceled." : ("Error: "+(err?.message||"failed"));
+  return null;
+} finally {
+  __NIS_GEN_ABORT = null;
+  nmShowBusy(false);
+}
 }
 
 /* Bind Nano UI */
 function bindNanoUI(){
   const save=q('nmSave'), styleSel=q('nmStyleSelected'), regen=q('nmRegenSelected'), hint=q('nmHint');
   const btnCancel=q('nmCancel');
+  const applyCached = q('nmApplyCached');
 
   if(save){ save.addEventListener('click',()=>{ const s=nmReadInputs(); nmSaveStyle(s); if(hint) hint.textContent='Style saved for this slide'; }); }
 
   if(styleSel){ styleSel.addEventListener('click',async()=>{
-    const s=nmReadInputs(); nmSaveStyle(s);
-    try{ const b64=await nmGenerate(s); nmApplyToSelection(b64); if(hint) hint.textContent='Applied to selection'; }
+    const s=nmReadInputs(); nmSaveStyle(s); nmShowCachedButton(s);
+    try{ const b64=await nmGenerate(s); if(b64) nmApplyToSelection(b64); if(hint && b64) hint.textContent='Applied to selection'; }
     catch(err){ if(hint) hint.textContent=(err&&err.message==='timeout')?'Generation timeout.':'Generation failed.'; }
   }); }
 
   if(regen){ regen.addEventListener('click',async()=>{
     let s=nmReadInputs();
     if(s.autoInc){ s.seed=(s.seed||0)+1; nmWriteInputs(s); }
-    nmSaveStyle(s);
-    try{ const b64=await nmGenerate(s); nmApplyToSelection(b64); if(hint) hint.textContent=s.autoInc?'Next seed applied':'Re-generated with same seed'; }
+    nmSaveStyle(s); nmShowCachedButton(s);
+    try{ const b64=await nmGenerate(s); if(b64) nmApplyToSelection(b64); if(hint && b64) hint.textContent=s.autoInc?'Next seed applied':'Re-generated with same seed'; }
     catch(err){ if(hint) hint.textContent=(err&&err.message==='timeout')?'Generation timeout.':'Generation failed.'; }
   }); }
 
-  if(btnCancel){ btnCancel.addEventListener('click',()=>{
-    try{
-      if(__NIS_GEN_ABORT) __NIS_GEN_ABORT.abort('user-cancel');
-      const h=q('nmHint'); if(h) h.textContent='Canceled.';
-    }catch(e){}
-  }); }
+  if(applyCached){
+  applyCached.addEventListener('click', ()=>{
+    const s = nmReadInputs();
+    const b64 = nmFindCachedForStyle(s);
+    const hint = q('nmHint');
+    if(b64){
+      nmApplyToSelection(b64);
+      if(hint) hint.textContent = 'Cached image applied.';
+    }else{
+      if(hint) hint.textContent = 'No cached image for current style.';
+      applyCached.style.display = 'none';
+    }
+  });
 }
-function nmInit(){ const s=nmGetStyle(); nmWriteInputs(s); }
+
+  if(btnCancel){
+  btnCancel.addEventListener('click',()=>{
+    nmAbortInFlight('user-cancel');
+  });
+}
+}
+function nmInit(){
+  const s = nmGetStyle();
+  nmWriteInputs(s);
+  // لو فيه صورة متخزّنة للستايل الحالي، نعرض زرار Apply cached
+  nmShowCachedButton(s);
+}
 
 /* ---------- Linked Sequence (MVP + Auto-advance + Inherit) ---------- */
 /* Storage */
@@ -741,4 +808,3 @@ if(window.Office && Office.onReady){
 }
 // ====== end of taskpane.js ======
 } // <--- close guard
-

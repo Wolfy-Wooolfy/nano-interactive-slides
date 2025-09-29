@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import sharp from "sharp";
 
 const app = express();
 app.use(cors({ origin: [/^https?:\/\/localhost:3000$/] }));
@@ -50,20 +51,29 @@ async function fetchImageAsBase64(url, timeoutMs=9000){
 
 /* ---------------- مصادر مجانية ---------------- */
 // A) Pixabay (needs free API key)
-async function getFromPixabay(topics, w, h, seed){
+
+// A) Pixabay (with resize)
+async function getFromPixabay(topics, w, h, seed) {
   if (!PXBKEY) throw new Error("pxb-no-key");
   const q = encodeURIComponent(topics.replace(/,/g," "));
-  const api = `https://pixabay.com/api/?key=${PXBKEY}&q=${q}&image_type=photo&per_page=50&safesearch=true&orientation=horizontal`;
+  const api = `https://pixabay.com/api/?key=${PXBKEY}&q=${q}&image_type=photo&per_page=50&safesearch=true`;
   const r = await fetchWithTimeout(api, { headers:{ "Accept":"application/json" } }, 9000);
   if (!r.ok) throw new Error(`pxb-status=${r.status}`);
   const j = await r.json();
   const hits = Array.isArray(j?.hits) ? j.hits : [];
   if (!hits.length) throw new Error("pxb-empty");
   const idx = seed % hits.length;
-  const src = hits[idx].webformatURL || hits[idx].largeImageURL;
+  const src = hits[idx].largeImageURL || hits[idx].webformatURL;
   if (!src) throw new Error("pxb-no-url");
-  const base64 = await fetchImageAsBase64(src, 9000);
-  return { base64, via: "mock-pixabay" };
+
+  // fetch original image
+  const rawResp = await fetchWithTimeout(src, {}, 9000);
+  if (!rawResp.ok) throw new Error(`pxb-fetch-fail:${rawResp.status}`);
+  const buf = Buffer.from(await rawResp.arrayBuffer());
+
+  // resize with sharp
+  const resized = await sharp(buf).resize(w, h, { fit: "cover" }).png().toBuffer();
+  return { base64: resized.toString("base64"), via: "pixabay-resized" };
 }
 
 // B) Wikimedia Commons (strong search)

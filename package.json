@@ -20,6 +20,7 @@
     "dev-nano-proxy": "node ./server/nano-proxy/index.js"
   },
   "devDependencies": {
+    "sharp": "^0.33.4",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
     "css-loader": "^7.1.2",
