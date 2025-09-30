@@ -115,8 +115,8 @@
     </div>
 
     <div class="btns">
-      <button id="linkPlay">Play sequence from this slide</button>
-      <button id="linkAdvance">Advance now</button>
+      <button id="linkPlay"    class="btn" title="Arm auto-start/auto-advance per settings">Play</button>
+      <button id="linkAdvance" class="btn" title="Advance to the configured next slide now">Advance</button>
       <span class="muted" id="linkHint"></span>
     </div>
   </div>
@@ -176,18 +176,53 @@
         <div class="inline">
           <div id="nmBusy" style="display:none">Generating…</div>
           <progress id="nmProg" value="0" max="100" style="display:none"></progress>
-          <button id="nmCancel" style="display:none">Cancel</button>
+          <button id="nmCancel"        class="btn" title="Cancel current generation" style="display:none;">Cancel</button>
         </div>
 
         <div class="tog"><input id="nmCaption" type="checkbox" /><label for="nmCaption">Caption (debug only)</label></div>
       </div>
 
       <div class="btns" style="margin-top:8px">
-	<button id="nmApplyCached" class="btn" style="display:none;">Apply cached</button>
+	<button id="nmApplyCached"   class="btn" title="Apply previously generated image for this style" style="display:none;">Apply cached</button>
 	<span id="nmHint" class="muted"></span>
-        <button id="nmSave">Save Style</button>
-        <button id="nmStyleSelected">Style Selected</button>
-        <button id="nmRegenSelected">Re-generate Selected</button>
+        <button id="nmSave"          class="btn" title="Save style for this slide">Save style</button>
+        <button id="nmStyleSelected" class="btn" title="Generate & apply for current style">Apply</button>
+        <button id="nmRegenSelected" class="btn" title="Re-generate (auto-increment seed if enabled)">Re-generate</button>
+        <button id="nmApplyBackground" class="btn" title="Apply image to slide background (fit & send to back)">Apply as Background</button>
+        <button id="nmPasteBackground" class="btn" title="Paste image from clipboard as background">Paste → Background</button>
+        <button id="nmExportStyles" class="btn" title="Export all slide styles to JSON">Export Styles</button>
+        <input id="nmImportStylesFile" type="file" accept="application/json" style="display:none;" />
+        <button id="nmImportStyles" class="btn" title="Import styles JSON to project">Import Styles</button>
+
+        <!-- Nano Style Preview Chip -->
+<div id="nmStyleChip" class="chip" style="
+  display:flex;align-items:center;gap:.5rem;margin:.5rem 0;
+  padding:.4rem .6rem;border:1px solid #e5e7eb;border-radius:.5rem;
+  background:#fafafa;font:13px/1.3 system-ui,Segoe UI,Arial; color:#374151;">
+  <span id="nmChipAspect"  style="font-weight:600;"></span>
+  <span id="nmChipSeed"    style="opacity:.8;"></span>
+  <span id="nmChipTheme"   style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+  <span id="nmChipPrompt"  style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+</div>
+        <label style="display:inline-flex;align-items:center;gap:.4rem;margin-left:.5rem;">
+  <input type="checkbox" id="nmBgLock" />
+  <span class="muted">Send to back</span>
+</label>
+
+<button id="nmApplyBackgroundBatch" class="btn" 
+        title="Apply image as background to all selected slides">
+  Apply to Selected Slides
+</button>
+
+<button id="nmCopyStyleSel" class="btn" 
+        title="Copy current Nano style to selected slides (no image generation)">
+  Copy style → Selected
+</button>
+
+<button id="nmCopyStyleAll" class="btn" 
+        title="Copy current Nano style to all slides (no image generation)">
+  Copy style → All
+</button>
       </div>
       <div class="muted" id="nmHint">Tip: لو عايز مقاس معيّن، اختَر Placeholder/صورة بالمقاس ده وبعدين اضغط Style Selected.</div>
       <div class="tog"><input id="nmAutoInc" type="checkbox" checked />
@@ -223,14 +258,14 @@
       </div>
 
       <div class="btns">
-        <button id="start">Start</button>
-        <button id="stop">Stop</button>
-        <button id="reset">Reset</button>
-        <button id="snapshot">Snapshot Now</button>
-        <button id="exportJson">Export JSON</button>
-        <button id="importJson">Import JSON</button>
+        <button id="start"      class="btn" title="Start simulation (this slide only)">Start</button>
+        <button id="stop"       class="btn" title="Stop simulation">Stop</button>
+        <button id="reset"      class="btn" title="Reset parameters to defaults">Reset</button>
+        <button id="snapshot"   class="btn" title="Insert current preview as image">Snapshot</button>
+        <button id="exportJson" class="btn" title="Export scene settings (JSON)">Export</button>
+        <button id="importJson" class="btn" title="Import scene settings (JSON)">Import</button>
         <input id="jsonFile" type="file" accept="application/json" style="display:none" />
-        <button id="downloadPng">Download PNG</button>
+        <button id="downloadPng" class="btn" title="Download preview as PNG">PNG</button>
       </div>
       <div class="muted" id="hostHint"></div>
     </div>

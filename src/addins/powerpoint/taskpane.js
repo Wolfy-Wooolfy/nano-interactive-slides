@@ -418,6 +418,46 @@ function nmReadInputs(){
     autoInc:q('nmAutoInc')?q('nmAutoInc').checked:true
   };
 }
+
+// ---- Nano Style Preview Chip ----
+function nmUpdateStyleChip(style){
+  try{
+    const $aspect = document.getElementById('nmChipAspect');
+    const $seed   = document.getElementById('nmChipSeed');
+    const $theme  = document.getElementById('nmChipTheme');
+    const $prompt = document.getElementById('nmChipPrompt');
+    const aspect  = style?.aspect || '16:9';
+    const seed    = (typeof style?.seed==='number' ? style.seed : Number(style?.seed||0)) || 0;
+    const theme   = (style?.theme||'').trim();
+    const prompt  = (style?.prompt||'').trim();
+
+    if($aspect) $aspect.textContent = `Aspect ${aspect}`;
+    if($seed)   $seed.textContent   = `• Seed #${seed}`;
+    if($theme)  $theme.textContent  = theme ? `• ${theme}` : '';
+    if($prompt) $prompt.textContent = prompt ? `• ${prompt}` : '';
+
+    // لون بسيط حسب الـ aspect
+    const chip = document.getElementById('nmStyleChip');
+    if(chip){
+      let bg = '#fafafa', bd = '#e5e7eb';
+      if(aspect==='1:1'){ bg='#f8fafc'; bd='#e2e8f0'; }
+      else if(aspect==='4:3'){ bg='#f9fafb'; bd='#e5e7eb'; }
+      else { bg='#fff7ed'; bd='#fed7aa'; } // 16:9
+      chip.style.background = bg;
+      chip.style.borderColor = bd;
+    }
+  }catch(e){}
+}
+
+// throttle لتقليل كثرة التحديثات مع الكتابة
+let __nmChipTs = 0;
+function nmUpdateStyleChipThrottled(style){
+  const now = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
+  if(now - __nmChipTs < 60) return;
+  __nmChipTs = now;
+  nmUpdateStyleChip(style);
+}
+
 function nmWriteInputs(s){
   if(q('nmTheme')) q('nmTheme').value = s.theme||'';
   if(q('nmSeed'))  q('nmSeed').value  = String(typeof s.seed==='number'?s.seed:42);
@@ -425,6 +465,7 @@ function nmWriteInputs(s){
   if(q('nmAspect'))q('nmAspect').value= s.aspect||'16:9';
   if(q('nmCaption'))q('nmCaption').checked=!!s.caption;
   if(q('nmAutoInc'))q('nmAutoInc').checked=(s.autoInc!==false);
+  nmUpdateStyleChipThrottled(s);
 }
 function nmHash(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
 function nmSize(aspect){ if(aspect==='4:3')return{w:1024,h:768}; if(aspect==='1:1')return{w:1024,h:1024}; return{w:1920,h:1080}; }
@@ -507,64 +548,276 @@ function nmApplyToSelection(base64){
   try{ Office.context.document.setSelectedDataAsync(base64,{coercionType:Office.CoercionType.Image},()=>{}); }catch(e){}
 }
 
+// ---- Get selected slide IDs ----
+async function ppGetSelectedSlideIds(){
+  if(!(window.PowerPoint && PowerPoint.run)) return null;
+  try{
+    let ids = [];
+    await PowerPoint.run(async (ctx)=>{
+      const sel = ctx.presentation.getSelectedSlides();
+      sel.load("items");
+      await ctx.sync();
+      ids = (sel.items||[]).map(s=>String(s.id));
+    });
+    return ids;
+  }catch(_){ return null; }
+}
+
+// ---- Get ALL slide IDs ----
+async function ppGetAllSlideIds(){
+  if(!(window.PowerPoint && PowerPoint.run)) return null;
+  try{
+    let ids = [];
+    await PowerPoint.run(async (ctx)=>{
+      const slides = ctx.presentation.slides;
+      slides.load("items");
+      await ctx.sync();
+      slides.items.forEach(s=>s.load("id"));
+      await ctx.sync();
+      ids = slides.items.map(s=>String(s.id));
+    });
+    return ids;
+  }catch(_){ return null; }
+}
+
+// ---- Copy given style to a list of slide IDs (no generation) ----
+async function nmCopyStyleToSlides(style, slideIds){
+  if(!Array.isArray(slideIds) || slideIds.length===0) return 0;
+  let n = 0;
+  for(const id of slideIds){
+    try{ nmSaveStyleForSlideKey(id, style); n++; }catch(_){}
+  }
+  return n;
+}
+
+// ---- One-shot generate (used by retry wrapper) ----
+async function nmGenerateOnce(style, onProgress, ctrl, timeoutMs=45000){
+  const provider = typeof window.NIS_generateImage==='function' ? window.NIS_generateImage : null;
+  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), timeoutMs));
+
+  if(!provider) return { base64: nmGeneratePNG(style), via: 'fallback' };
+
+  const result = await Promise.race([
+    provider(style, onProgress, ctrl.signal),
+    timeout
+  ]);
+  if (ctrl.signal.aborted) throw new Error("canceled");
+
+  if(typeof result === 'string' && result.startsWith('data:image/')){
+    return { base64: result.split(',')[1], via: 'provider' };
+  }else if(result && typeof result.base64 === 'string'){
+    return { base64: result.base64, via: result.via || 'provider' };
+  }
+  throw new Error('empty-result');
+}
+// ---- Apply generated image as slide background ----
+// ---- Apply generated image as slide background (fit & optional send-to-back) ----
+async function nmApplyAsBackground(base64, opts={ sendToBack: false }){
+  const hint = q('nmHint');
+
+  // 1) guaranteed insert
+  try{
+    await new Promise((res)=> {
+      Office.context.document.setSelectedDataAsync(
+        base64,
+        { coercionType: Office.CoercionType.Image },
+        ()=>res()
+      );
+    });
+  }catch(e){
+    if(hint) hint.textContent = 'Inserted image (fallback).';
+    return;
+  }
+
+  // 2) try to resize & z-order with PowerPoint API
+  try{
+    if(!(window.PowerPoint && PowerPoint.run)) {
+      if(hint) hint.textContent = 'Applied (basic insert).';
+      return;
+    }
+
+    await PowerPoint.run(async (ctx)=>{
+      const pres  = ctx.presentation;
+      const slide = pres.getSelectedSlides().getItemAt(0);
+      slide.load("id");
+      const shapes = slide.shapes;
+      shapes.load("items");
+      await ctx.sync();
+
+      const count = shapes.items.length;
+      if(count === 0) return;
+
+      // heuristics: pick the last shape (just inserted), but confirm it's a picture if possible
+      let pic = shapes.items[count-1];
+      try { pic.load(["type","width","height","left","top"]); } catch(_) {}
+      await ctx.sync();
+
+      // fallback slide size (pt). Not all hosts expose page size.
+      let slideW = 960, slideH = 540;
+
+      try{ pic.left = 0; }catch(_){}
+      try{ pic.top  = 0; }catch(_){}
+      try{ pic.width  = slideW; }catch(_){}
+      try{ pic.height = slideH; }catch(_){}
+
+      if(opts.sendToBack){
+        try{ pic.sendToBack(); }catch(_){}
+      }
+
+      await ctx.sync();
+    });
+
+    if(hint) hint.textContent = opts.sendToBack ? 'Applied as background (fit & back).' : 'Applied as background (fit).';
+  }catch(e){
+    if(hint) hint.textContent = 'Applied (basic insert).';
+  }
+}
+
+// ---- Paste image from clipboard ----
+async function nmPasteAsBackground(){
+  const hint = q('nmHint');
+  try{
+    if(!navigator.clipboard || !navigator.clipboard.read){
+      if(hint) hint.textContent='Clipboard API not supported.';
+      return;
+    }
+    const items = await navigator.clipboard.read();
+    for(const item of items){
+      for(const type of item.types){
+        if(type.startsWith("image/")){
+          const blob = await item.getType(type);
+          const buf = await blob.arrayBuffer();
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+          await nmApplyAsBackground(base64, { sendToBack: (q('nmBgLock')?.checked) });
+          if(hint) hint.textContent='Pasted image applied as background.';
+          return;
+        }
+      }
+    }
+    if(hint) hint.textContent='No image found in clipboard.';
+  }catch(e){
+    if(hint) hint.textContent='Clipboard paste failed.';
+  }
+}
+
+// ---- Apply to all selected slides (batch) ----
+async function nmApplyAsBackgroundBatch(style){
+  const hint = q('nmHint');
+  const sendToBack = !!(q('nmBgLock') && q('nmBgLock').checked);
+
+  // 1) resolve/calc image once (cache first)
+  let base64 = (typeof nmFindCachedForStyle==='function') ? nmFindCachedForStyle(style) : null;
+  if(!base64){
+    const gen = await nmGenerate(style);
+    if(!gen){
+      if(hint) hint.textContent = 'Generation failed — batch aborted.';
+      return;
+    }
+    base64 = gen;
+  }
+
+  // 2) enumerate selected slides
+  if(!(window.PowerPoint && PowerPoint.run)){
+    // fallback: apply on current slide only
+    await nmApplyAsBackground(base64, { sendToBack });
+    if(hint) hint.textContent = 'Host lacks batch API — applied to current slide.';
+    return;
+  }
+
+  try{
+    await PowerPoint.run(async (ctx)=>{
+      const sel = ctx.presentation.getSelectedSlides();
+      sel.load("items");
+      await ctx.sync();
+
+      if(!sel.items || sel.items.length===0){
+        // no selection, apply to current
+        await nmApplyAsBackground(base64, { sendToBack });
+        return;
+      }
+
+      // loop slides: select → insert → size → back
+      for(const s of sel.items){
+        try{
+          // switch selection to that slide
+          ctx.presentation.setSelectedSlides([s.id]);
+          await ctx.sync();
+
+          // apply to this slide
+          // (we're in run context; nmApplyAsBackground uses Office.context + a new run, which is fine)
+          // keep it sequential to avoid race
+          // eslint-disable-next-line no-await-in-loop
+          await nmApplyAsBackground(base64, { sendToBack });
+        }catch(_){}
+      }
+    });
+
+    if(hint) hint.textContent = `Applied to ${'selected'} slide(s).`;
+  }catch(e){
+    // fallback to current slide only
+    await nmApplyAsBackground(base64, { sendToBack });
+    if(hint) hint.textContent = 'Batch failed — applied to current slide.';
+  }
+}
+
 /* Core generate with provider/timeout/cancel/cache (+ catch for canceled) */
 async function nmGenerate(style){
-  nmAbortInFlight('preempt');
   const key=nmCacheKey(style);
-  nmShowBusy(true); nmSetProgress(0,'Starting');
+
+  // أوقف أي عملية توليد سابقة قبل ما نبدأ الجديدة
+  nmAbortInFlight('preempt');
+
+  nmShowBusy(true); 
+  nmSetProgress(0,'Starting');
+
   try{
     const cached = NISPersist.cacheGet(key);
-    if(cached){ nmSetProgress(100,'Cached'); return cached; }
+    if(cached){ nmSetProgress(100,'Cached'); try{ nmShowCachedButton(style); }catch(e){}; return cached; }
 
-    // Provider available?
-    const provider = typeof window.NIS_generateImage==='function' ? window.NIS_generateImage : null;
-
-    // Abort support
     const ctrl = new AbortController();
     __NIS_GEN_ABORT = ctrl;
-
-    // Progress callback (provider may ignore it)
     const onProgress = (p,msg)=>{ try{ nmSetProgressThrottled(p,msg||''); }catch(e){} };
 
-    // Timeout race (45s)
-    const timeoutMs = 45000;
-    const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), timeoutMs));
+    let resBase64=null, attempt=0, maxAttempts=2;
+    let currentStyle = {...style};
 
-    let resBase64 = null;
-
-    if(provider){
-      const result = await Promise.race([
-        provider(style, onProgress, ctrl.signal),
-        timeout
-      ]);
-      if (ctrl.signal.aborted) throw new Error("canceled");
-      if(typeof result === 'string' && result.startsWith('data:image/')){
-        resBase64 = result.split(',')[1];
-      }else if(result && typeof result.base64 === 'string'){
-        resBase64 = result.base64;
+    while(attempt < maxAttempts){
+      try{
+        nmSetProgress(5+attempt*5, attempt?('Retry '+attempt):'Generating');
+        const { base64 } = await nmGenerateOnce(currentStyle, onProgress, ctrl, 45000);
+        resBase64 = base64;
+        break; // success
+      }catch(err){
+        if (ctrl.signal.aborted) throw err; // canceled
+        attempt++;
+        if(attempt >= maxAttempts) {
+          throw err;
+        }
+        // Retry: زوّد الـ seed وغير الرسالة
+        currentStyle = {...currentStyle, seed: (Number(currentStyle.seed)||0)+1};
+        nmSetProgress(10+attempt*5, 'Retrying with seed '+currentStyle.seed);
       }
     }
 
-    // Fallback if provider missing أو رجّع فورغ
     if(!resBase64){
-      onProgress(25,'Fallback generator');
-      resBase64 = nmGeneratePNG(style);
+      nmSetProgress(25,'Fallback generator');
+      resBase64 = nmGeneratePNG(currentStyle);
     }
 
-    onProgress(90,'Caching');
-    NISPersist.cacheSet(key, resBase64);
+    nmSetProgress(90,'Caching');
+    NISPersist.cacheSet(nmCacheKey(currentStyle), resBase64); // أخزّن حسب الستايل المُجرّب فعليًا
 
-    onProgress(100,'Done');
-    try{ nmShowCachedButton(style); }catch(e){}
+    nmSetProgress(100,'Done');
+    try{ nmShowCachedButton(currentStyle); }catch(e){}
     return resBase64;
   } catch(err){
-  const h=q('nmHint'); 
-  if(h) h.textContent=(err && err.message==="canceled") ? "Canceled." : ("Error: "+(err?.message||"failed"));
-  return null;
-} finally {
-  __NIS_GEN_ABORT = null;
-  nmShowBusy(false);
-}
+    const h=q('nmHint'); 
+    if(h) h.textContent=(err && err.message==="canceled") ? "Canceled." : ("Error: "+(err?.message||"failed"));
+    return null;
+  } finally {
+    __NIS_GEN_ABORT = null;
+    nmShowBusy(false);
+  }
 }
 
 /* Bind Nano UI */
@@ -572,6 +825,60 @@ function bindNanoUI(){
   const save=q('nmSave'), styleSel=q('nmStyleSelected'), regen=q('nmRegenSelected'), hint=q('nmHint');
   const btnCancel=q('nmCancel');
   const applyCached = q('nmApplyCached');
+  const applyBg = q('nmApplyBackground');
+  const applyBgBatch = q('nmApplyBackgroundBatch');
+  const bgLock       = q('nmBgLock');
+  const copySel = q('nmCopyStyleSel');
+  const copyAll = q('nmCopyStyleAll');
+  const pasteBg = q('nmPasteBackground');
+  const expStyles = q('nmExportStyles');
+  const impStyles = q('nmImportStyles');
+  const impFile   = q('nmImportStylesFile');
+
+if(expStyles){
+  expStyles.addEventListener('click', ()=>{ nmExportAllStyles(); });
+}
+if(impStyles && impFile){
+  impStyles.addEventListener('click', ()=>{ impFile.click(); });
+  impFile.addEventListener('change', ev=>{
+    const f=ev.target.files && ev.target.files[0];
+    if(f){ nmImportStylesFile(f); impFile.value=''; }
+  });
+}
+
+if(pasteBg){
+  pasteBg.addEventListener('click', async ()=>{
+    await nmPasteAsBackground();
+  });
+}
+
+  // تحديث البطاقة فور تغيّر أي input
+['nmTheme','nmSeed','nmPrompt','nmAspect','nmCaption','nmAutoInc'].forEach(id=>{
+  const el = document.getElementById(id);
+  if(!el) return;
+  const handler = ()=>{
+    const s = nmReadInputs();
+    nmUpdateStyleChipThrottled(s);
+  };
+  el.addEventListener('input', handler);
+  el.addEventListener('change', handler);
+});
+
+// بعد أي حفظ/توليد/إعادة توليد حدّث البطاقة
+const _afterGenHint = ()=>{
+  const s = nmReadInputs();
+  nmUpdateStyleChipThrottled(s);
+};
+
+const saveBtn  = document.getElementById('nmSave');
+const applyBtn = document.getElementById('nmStyleSelected');
+const regenBtn = document.getElementById('nmRegenSelected');
+const cacheBtn = document.getElementById('nmApplyCached');
+
+if(saveBtn)  saveBtn .addEventListener('click', _afterGenHint);
+if(applyBtn) applyBtn.addEventListener('click', _afterGenHint);
+if(regenBtn) regenBtn.addEventListener('click', _afterGenHint);
+if(cacheBtn) cacheBtn.addEventListener('click', _afterGenHint);
 
   if(save){ save.addEventListener('click',()=>{ const s=nmReadInputs(); nmSaveStyle(s); if(hint) hint.textContent='Style saved for this slide'; }); }
 
@@ -601,8 +908,84 @@ function bindNanoUI(){
       if(hint) hint.textContent = 'No cached image for current style.';
       applyCached.style.display = 'none';
     }
+  }); }
+
+  if(applyBg){
+  applyBg.addEventListener('click', async ()=>{
+    const s   = nmReadInputs();
+    // لو فيه كاش للصورة الحالية يوفّر وقت
+    const b64 = (nmFindCachedForStyle ? nmFindCachedForStyle(s) : null);
+    const hint = q('nmHint');
+    if(applyBgBatch){
+  applyBgBatch.addEventListener('click', async ()=>{
+    const s = nmReadInputs();
+    nmSaveStyle(s);
+    // optional: show bar while batch is running
+    nmShowBusy(true); nmSetProgress(0, 'Batch applying');
+    try{
+      await nmApplyAsBackgroundBatch(s);
+      nmSetProgress(100, 'Done');
+    } finally {
+      nmShowBusy(false);
+    }
   });
 }
+
+// (اختياري) غيّر التلميح لما يبدّل المستخدم حالة "Send to back"
+if(bgLock){
+  bgLock.addEventListener('change', ()=>{
+    const hint = q('nmHint');
+    if(hint) hint.textContent = bgLock.checked ? 'Backgrounds will be sent to back.' : 'Backgrounds inserted in front.';
+  });
+}
+
+if(copySel){
+  copySel.addEventListener('click', async ()=>{
+    const hint = q('nmHint');
+    const s = nmReadInputs();
+    nmSaveStyle(s); // خزّن على السلايد الحالي كمان
+    const ids = await ppGetSelectedSlideIds();
+    if(!ids || ids.length===0){
+      if(hint) hint.textContent = 'No selected slides.';
+      return;
+    }
+    const n = await nmCopyStyleToSlides(s, ids);
+    if(hint) hint.textContent = `Style copied to ${n} selected slide(s).`;
+  });
+  nmUpdateStyleChipThrottled(s);
+}
+
+if(copyAll){
+  copyAll.addEventListener('click', async ()=>{
+    const hint = q('nmHint');
+    const s = nmReadInputs();
+    nmSaveStyle(s); // خزّن على السلايد الحالي
+    const ids = await ppGetAllSlideIds();
+    if(!ids || ids.length===0){
+      if(hint) hint.textContent = 'No slides found.';
+      return;
+    }
+    const n = await nmCopyStyleToSlides(s, ids);
+    if(hint) hint.textContent = `Style copied to ${n} slide(s).`;
+  });
+  nmUpdateStyleChipThrottled(s);
+}
+
+    if(b64){
+      await nmApplyAsBackground(b64);
+      if(hint) hint.textContent = 'Background applied from cache.';
+      return;
+    }
+
+    // مفيش كاش: نولّد، نخزّن، وبعدين نطبّق
+    const gen = await nmGenerate(s);
+    if(gen){
+      await nmApplyAsBackground(gen);
+      if(hint) hint.textContent = 'Background applied.';
+    }else{
+      if(hint) hint.textContent = 'Generation failed — cannot apply background.';
+    }
+  }); }
 
   if(btnCancel){
   btnCancel.addEventListener('click',()=>{
@@ -615,6 +998,7 @@ function nmInit(){
   nmWriteInputs(s);
   // لو فيه صورة متخزّنة للستايل الحالي، نعرض زرار Apply cached
   nmShowCachedButton(s);
+  nmUpdateStyleChipThrottled(s);
 }
 
 /* ---------- Linked Sequence (MVP + Auto-advance + Inherit) ---------- */
@@ -641,6 +1025,49 @@ function linkSave(k, data){
   };
   __NIS_LINK_CACHE.set(k, clean);
   NISPersist.saveLink(k, clean);
+}
+
+// ---- Export all slide styles ----
+async function nmExportAllStyles(){
+  let styles = {};
+  try{
+    if(!(window.PowerPoint && PowerPoint.run)){
+      return;
+    }
+    await PowerPoint.run(async (ctx)=>{
+      const slides = ctx.presentation.slides;
+      slides.load("items");
+      await ctx.sync();
+      slides.items.forEach(s=>s.load("id"));
+      await ctx.sync();
+      for(const sl of slides.items){
+        const id = String(sl.id);
+        const st = nmLoadStyleForSlideKey(id);
+        if(st) styles[id] = st;
+      }
+    });
+  }catch(e){}
+  const blob = new Blob([JSON.stringify(styles,null,2)], {type:"application/json"});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='nis-project-styles.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---- Import styles JSON ----
+function nmImportStylesFile(f){
+  const r=new FileReader();
+  r.onload=async ()=>{
+    try{
+      const data=JSON.parse(r.result);
+      for(const [id,st] of Object.entries(data)){
+        nmSaveStyleForSlideKey(id, st);
+      }
+      const hint=q('nmHint'); if(hint) hint.textContent='Styles imported for '+Object.keys(data).length+' slide(s).';
+    }catch(e){}
+  };
+  r.readAsText(f);
 }
 
 /* UI helpers */
