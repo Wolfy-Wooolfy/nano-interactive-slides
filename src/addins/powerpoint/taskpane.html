@@ -87,11 +87,7 @@
   })();
 </script>
 
-<!-- اتركه كما هو -->
 <script defer src="./taskpane.js"></script>
-
-  <!-- تأكد إن التحميل ده موجود مرة واحدة فقط -->
-  <script defer src="./taskpane.js"></script>
   <link rel="icon" href="data:,">
 </head>
 <body>
@@ -246,6 +242,52 @@
         <input id="delay" type="range" min="0" max="10" step="0.1" value="1" />
         <div class="value" id="delayVal">1.0</div>
       </div>
+
+        <!-- Styles Dashboard -->
+         
+        <!-- Overlay Label -->
+      <div class="card" id="overlayCard" style="margin-top:12px">
+        <h3 class="title">Overlay label</h3>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;gap:6px;align-items:center">
+            <span class="muted">Corner</span>
+            <select id="ovCorner">
+              <option value="tr">Top-Right</option>
+              <option value="tl">Top-Left</option>
+              <option value="br">Bottom-Right</option>
+              <option value="bl">Bottom-Left</option>
+            </select>
+          </label>
+
+          <label style="display:flex;gap:6px;align-items:center">
+            <span class="muted">Opacity</span>
+            <input id="ovOpacity" type="range" min="20" max="100" step="5" value="80" />
+            <span id="ovOpacityVal" class="muted">80%</span>
+          </label>
+
+          <button id="ovApply">Apply overlay</button>
+          <button id="ovRemove">Remove overlay</button>
+          <div id="ovHint" class="muted" style="margin-left:auto"></div>
+        </div>
+      </div>
+
+      <div class="card" id="stylesDash" style="margin-top:12px">
+        <h3 class="title">Styles Dashboard</h3>
+        <div class="muted" style="margin-bottom:8px">Manage all slide styles from one place.</div>
+
+        <!-- Toolbar -->
+        <div id="stylesToolbar" style="display:flex;gap:10px;align-items:center;margin:6px 0 10px">
+          <label style="display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="sdUseCacheFirst" checked>
+            <span class="muted">Use cached image if available</span>
+          </label>
+          <button id="sdRegenApplySelected">Regenerate + Apply (Selected)</button>
+          <div id="sdHint" class="muted" style="margin-left:auto"></div>
+        </div>
+
+        <div id="stylesList" class="grid" style="gap:8px"></div>
+      </div>
+
 
       <div class="half">
         <div class="tog"><input id="projectToggle" type="checkbox" checked /><label for="projectToggle">Project to slide</label></div>

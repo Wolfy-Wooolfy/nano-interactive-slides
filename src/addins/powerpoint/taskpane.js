@@ -1,8 +1,13 @@
-// --- guard: don't run twice ---
 if (window.__NIS_TASKPANE_JS__) {
   console.debug("NIS: taskpane.js already loaded; skipping re-eval");
 } else {
   window.__NIS_TASKPANE_JS__ = true;
+
+// shim to satisfy Office.js loader (avoids noisy console error)
+if (typeof window !== 'undefined' && typeof Office !== 'undefined' && !Office.initialize) {
+  Office.initialize = function () {};
+}
+
 
 // ====== (كل كود الملف الحالي يبدأ من هنا كما هو) ======
 /* ======== Nano Interactive Slides - taskpane.js (per-slide + linked sequence + nano progress/cancel + caching) ======== */
@@ -157,6 +162,14 @@ function nmSaveStyleForSlideKey(k,s){
   try{ Office.context.document.settings.set(nmStyleKey(k), JSON.stringify(s)); nisScheduleSave(); }catch(e){}
 }
 
+function nmImgMetaKey(slideId){ return `NIS:imgmeta:${slideId}`; }
+function nmSaveImageMeta(slideId, meta){
+  try { localStorage.setItem(nmImgMetaKey(slideId), JSON.stringify(meta||{})); } catch(e){}
+}
+function nmLoadImageMeta(slideId){
+  try { return JSON.parse(localStorage.getItem(nmImgMetaKey(slideId)) || '{}'); } catch(e){ return {}; }
+}
+
 /* ---------- Fast slide id (race) ---------- */
 function captureSlideKeyFast(){
   return new Promise((resolve)=>{
@@ -251,6 +264,7 @@ function wireSlideChange(){
         restoreCurrentSlide();
         nmInit();
         linkRestoreForSlide();   // refresh Linked Sequence UI
+        stylesDashRefresh();
 
         const cur = getUIParams();
         if(cur.autoStart){
@@ -447,6 +461,326 @@ function nmUpdateStyleChip(style){
       chip.style.borderColor = bd;
     }
   }catch(e){}
+}
+
+// ---- Styles Dashboard helpers ----
+function nmMakeMiniChip(style){
+  const aspect = style?.aspect || '16:9';
+  const seed   = (typeof style?.seed==='number' ? style.seed : Number(style?.seed||0)) || 0;
+  const theme  = (style?.theme||'').trim();
+  const prompt = (style?.prompt||'').trim();
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = "display:flex;gap:.4rem;align-items:center;border:1px solid #e5e7eb;border-radius:.4rem;padding:.2rem .4rem;background:#fafafa;font:12px system-ui,Segoe UI,Arial;color:#374151;";
+
+  const elA = document.createElement('span'); elA.textContent = aspect; elA.style.fontWeight = "600";
+  const elS = document.createElement('span'); elS.textContent = `#${seed}`; elS.style.opacity=".8";
+  const elT = document.createElement('span'); elT.textContent = theme;  elT.style.maxWidth="160px"; elT.style.whiteSpace="nowrap"; elT.style.overflow="hidden"; elT.style.textOverflow="ellipsis";
+  const elP = document.createElement('span'); elP.textContent = prompt; elP.style.maxWidth="220px"; elP.style.whiteSpace="nowrap"; elP.style.overflow="hidden"; elP.style.textOverflow="ellipsis";
+
+  wrap.appendChild(elA); wrap.appendChild(elS);
+  if(theme) wrap.appendChild(elT);
+  if(prompt) wrap.appendChild(elP);
+  return wrap;
+}
+
+// ---- Overlay label (corner tag) ----
+const NIS_OVERLAY_NAME = 'NIS_OVERLAY';
+
+function ovBuildBase64(style, opacityPct){
+  // نص الشارة
+  const aspect = style?.aspect || '16:9';
+  const seed   = (typeof style?.seed==='number' ? style.seed : Number(style?.seed||0)) || 0;
+  const theme  = (style?.theme||'').trim();
+
+  // كانفاس شفاف
+  const W = 460, H = 64, R = 12;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+
+  // خلفية نصف شفافة + حد خفيف
+  const alpha = Math.max(0.2, Math.min(1, (opacityPct||80)/100));
+  g.fillStyle = `rgba(255,255,255,${alpha})`;
+  g.strokeStyle = 'rgba(0,0,0,0.12)';
+  g.lineWidth = 1;
+
+  // rounded rect
+  g.beginPath();
+  g.moveTo(R,0); g.lineTo(W-R,0); g.quadraticCurveTo(W,0,W,R);
+  g.lineTo(W,H-R); g.quadraticCurveTo(W,H,W-R,H);
+  g.lineTo(R,H); g.quadraticCurveTo(0,H,0,H-R);
+  g.lineTo(0,R); g.quadraticCurveTo(0,0,R,0); g.closePath();
+  g.fill(); g.stroke();
+
+  // نص
+  g.font = '600 15px Segoe UI, system-ui, Arial';
+  g.fillStyle = '#111';
+  g.textBaseline = 'middle';
+  const parts = [`${aspect}`, `#${seed}`, theme ? theme : ''];
+  const txt = parts.filter(Boolean).join('  •  ');
+  g.fillText(txt, 16, H/2);
+
+  // حوّل Base64 بدون prefix
+  const dataUrl = c.toDataURL('image/png');
+  return dataUrl.split(',')[1]; // remove "data:image/png;base64,"
+}
+
+async function ovRemoveCurrent(ctx){
+  const sel = ctx.presentation.getSelectedSlides();
+  sel.load("items");
+  await ctx.sync();
+  const slide = sel.items?.[0];
+  if(!slide) return false;
+  const shapes = slide.shapes;
+  shapes.load("items/name");
+  await ctx.sync();
+  let removed = false;
+  for(const sh of shapes.items){
+    if((sh.name||'') === NIS_OVERLAY_NAME){
+      sh.delete();
+      removed = true;
+    }
+  }
+  if(removed) await ctx.sync();
+  return removed;
+}
+
+async function ovApplyToCurrent(opts){
+  const style   = nmReadInputs();
+  const corner  = (opts?.corner||'tr');
+  const opacity = Number(opts?.opacity||80);
+
+  const b64 = ovBuildBase64(style, opacity);
+
+  // 1) امسح أي شارة قديمة أولًا داخل run مستقل
+  if (window.PowerPoint && PowerPoint.run){
+    try{
+      await PowerPoint.run(async (ctx)=>{ await ovRemoveCurrent(ctx); });
+    }catch(_) {}
+  }
+
+  // 2) أدرج الصورة بضمان (نفس الطريقة المستخدمة للخلفيات)
+  await new Promise((res)=> {
+    Office.context.document.setSelectedDataAsync(
+      b64,
+      { coercionType: Office.CoercionType.Image },
+      ()=>res()
+    );
+  });
+
+  // 3) لقّط آخر شيب (المضاف حالًا) واضبط حجمه/مكانه واسمه
+  await PowerPoint.run(async (ctx)=>{
+    const pres  = ctx.presentation;
+    const slide = pres.getSelectedSlides().getItemAt(0);
+    slide.load("id");
+    const shapes = slide.shapes;
+    shapes.load("items");
+    await ctx.sync();
+
+    const count = shapes.items.length;
+    if(count === 0) return;
+
+    let img = shapes.items[count-1];
+    try { img.load(["width","height","left","top","name"]); } catch(_) {}
+    await ctx.sync();
+
+    // اسم ثابت للـ overlay
+    try { img.name = NIS_OVERLAY_NAME; } catch(_) {}
+
+    // حجم ومكان
+    const margin = 12;
+    const w = 460, h = 64; // نفس أبعاد الكانفاس
+    // مبدئيًا أعلى يسار
+    try{ img.left = margin; img.top = margin; img.width = w; img.height = h; }catch(_){}
+
+    // موضع الركن — بدون getSlideSize (بنفس افتراض 960×540 pt)
+    const sw = 960, sh = 540;
+    try{
+      if (corner === 'tr') {
+        img.left = Math.max(margin, sw - w - margin); 
+        img.top  = margin;
+      } else if (corner === 'br') {
+        img.left = Math.max(margin, sw - w - margin); 
+        img.top  = Math.max(margin, sh - h - margin);
+      } else if (corner === 'bl') {
+        img.left = margin; 
+        img.top  = Math.max(margin, sh - h - margin);
+      }
+      // 'tl' يظل (margin, margin)
+    }catch(_){}
+
+    await ctx.sync();
+  });
+}
+
+async function stylesDashRefresh(){
+  const list = document.getElementById('stylesList');
+  if(!list) return;
+  list.innerHTML = '';
+
+  if(!(window.PowerPoint && PowerPoint.run)){
+    const div = document.createElement('div');
+    div.className = 'muted';
+    div.textContent = '(Styles Dashboard needs PowerPoint host)';
+    list.appendChild(div);
+    return;
+  }
+
+  await PowerPoint.run(async (ctx)=>{
+    const slides = ctx.presentation.slides;
+    slides.load("items");
+    await ctx.sync();
+    slides.items.forEach(s=>s.load(["id","index","title"]));
+    await ctx.sync();
+
+    for(const sl of slides.items){
+      const id    = String(sl.id);
+      const index = (Number(sl.index) || 0) + 1;
+      const title = (sl.title || '').trim();
+
+      const row = document.createElement('div');
+      row.style.cssText="display:grid;grid-template-columns:110px 1fr auto auto auto;gap:8px;align-items:center;border:1px solid #eee;border-radius:8px;padding:8px";
+
+      const left = document.createElement('div');
+      left.innerHTML = `<div style="font-weight:600">Slide ${index}</div><div class="muted" style="font-size:11px">${title||id}</div>`;
+
+      const style = nmLoadStyleForSlideKey(id) || { theme:'', seed:42, prompt:'', aspect:'16:9' };
+      const chip = nmMakeMiniChip(style);
+      const meta = nmLoadImageMeta(id);
+if(meta && meta.at){
+  chip.title = `Provider: ${meta.provider||'-'} | Seed: ${meta.seed} | Aspect: ${meta.aspect} | ${meta.at}`;
+}
+
+
+      const btnApply = document.createElement('button'); btnApply.textContent = 'Apply Background';
+      const btnCopy  = document.createElement('button'); btnCopy.textContent  = 'Copy from Current';
+      const btnRegen = document.createElement('button'); btnRegen.textContent = 'Regenerate';
+
+      btnApply.addEventListener('click', async ()=>{
+        const sendToBack = !!(q('nmBgLock') && q('nmBgLock').checked);
+        // جرّب كاش أولًا
+        let b64 = nmFindCachedForStyle ? nmFindCachedForStyle(style) : null;
+        if(!b64){ b64 = await nmGenerate(style); if(!b64) return; }
+        // بدّل التحديد للسلايد الهدف وطبّق
+        await PowerPoint.run(async (ctx2)=>{
+          ctx2.presentation.setSelectedSlides([id]); await ctx2.sync();
+        });
+        await nmApplyAsBackground(b64, { sendToBack });
+      });
+
+      btnCopy.addEventListener('click', async ()=>{
+        // اقرأ الستايل الحالي من Inputs واحفظه على السلايد الهدف
+        const cur = nmReadInputs();
+        nmSaveStyleForSlideKey(id, cur);
+        // حدّث الـ chip
+        row.children[1].innerHTML = ''; row.children[1].appendChild(nmMakeMiniChip(cur));
+      });
+
+      btnRegen.addEventListener('click', async ()=>{
+        let s = nmLoadStyleForSlideKey(id) || nmReadInputs();
+        if(s.autoInc!==false){ s.seed = (Number(s.seed)||0)+1; nmSaveStyleForSlideKey(id, s); }
+        const sendToBack = !!(q('nmBgLock') && q('nmBgLock').checked);
+        const b64 = await nmGenerate(s); if(!b64) return;
+        await PowerPoint.run(async (ctx2)=>{
+          ctx2.presentation.setSelectedSlides([id]); await ctx2.sync();
+        });
+        await nmApplyAsBackground(b64, { sendToBack });
+        // refresh chip
+        row.children[1].innerHTML = ''; row.children[1].appendChild(nmMakeMiniChip(s));
+      });
+
+      row.appendChild(left);
+      row.appendChild(chip);
+      row.appendChild(btnApply);
+      row.appendChild(btnCopy);
+      row.appendChild(btnRegen);
+
+      list.appendChild(row);
+    }
+  });
+}
+
+async function sdRegenerateApplyForSlides(style, ids, useCacheFirst){
+  if(!ids || ids.length===0) return 0;
+  let done = 0;
+  // progress UI
+  if(typeof nmShowBusy==='function') nmShowBusy(true);
+  try{
+    for(let i=0;i<ids.length;i++){
+      const id = String(ids[i]);
+      // بدّل التحديد للسلايد الهدف
+      await PowerPoint.run(async (ctx)=>{
+        ctx.presentation.setSelectedSlides([id]); await ctx.sync();
+      });
+
+      // جرّب الكاش أولًا
+      let b64 = null;
+      if(useCacheFirst && typeof nmFindCachedForStyle==='function'){
+        b64 = nmFindCachedForStyle(style);
+      }
+      // لو مفيش كاش → ولّد
+      if(!b64){
+        const s = { ...style };
+        if(s.autoInc!==false){ s.seed = (Number(s.seed)||0) + 1; }
+        nmSaveStyleForSlideKey(id, s);
+        b64 = await nmGenerate(s);
+      }
+      if(b64){
+        await nmApplyAsBackground(b64, { sendToBack: !!(q('nmBgLock') && q('nmBgLock').checked) });
+        done++;
+      }
+      if(typeof nmSetProgress==='function'){
+        const p = Math.round(((i+1)/ids.length)*100);
+        nmSetProgress(p, `Applied ${i+1}/${ids.length}`);
+      }
+    }
+  } finally {
+    if(typeof nmShowBusy==='function') nmShowBusy(false);
+  }
+  return done;
+}
+
+function stylesDashInit(){
+  // نضمن التشغيل بعد Office.onReady (أو DOM fallback للمعاينة في المتصفح)
+  const boot = async ()=>{
+    await stylesDashRefresh();
+
+    const btn     = document.getElementById('sdRegenApplySelected');
+    const hint    = document.getElementById('sdHint');
+    const useCache= document.getElementById('sdUseCacheFirst');
+
+    if (btn){
+      btn.addEventListener('click', async ()=>{
+        try{
+          const s = nmReadInputs();
+          nmSaveStyle(s);
+
+          const ids = await ppGetSelectedSlideIds();
+          if(!ids || ids.length===0){
+            if(hint) hint.textContent = 'No selected slides.';
+            return;
+          }
+
+          if(hint) hint.textContent = 'Working...';
+          const n = await sdRegenerateApplyForSlides(s, ids, !!(useCache && useCache.checked));
+          if(hint) hint.textContent = `Done: ${n} slide(s).`;
+
+          // حدث قائمة الشرائح والـ chips بعد التنفيذ
+          stylesDashRefresh();
+        }catch(e){
+          console.error(e);
+          if(hint) hint.textContent = 'Failed.';
+        }
+      });
+    }
+  };
+
+  if (window.Office && Office.onReady) {
+    Office.onReady().then(boot).catch(()=>{ /* ignore */ });
+  } else {
+    document.addEventListener('DOMContentLoaded', boot);
+  }
 }
 
 // throttle لتقليل كثرة التحديثات مع الكتابة
@@ -652,6 +986,28 @@ async function nmApplyAsBackground(base64, opts={ sendToBack: false }){
       try { pic.load(["type","width","height","left","top"]); } catch(_) {}
       await ctx.sync();
 
+      try{
+        const style = (typeof nmReadInputs === 'function') ? nmReadInputs() : {};
+        if (window.PowerPoint && PowerPoint.run){
+          await PowerPoint.run(async (ctx2)=>{
+            const sel = ctx2.presentation.getSelectedSlides();
+            sel.load("items");
+            await ctx2.sync();
+            const curId = sel.items?.[0]?.id;
+            if(curId){
+              nmSaveImageMeta(String(curId), {
+                provider: style?.provider || 'mock/pixabay',
+                seed: style?.seed,
+                aspect: style?.aspect,
+                theme: style?.theme,
+                prompt: style?.prompt,
+                at: new Date().toISOString()
+              });
+            }
+          });
+        }
+      }catch(_){}
+
       // fallback slide size (pt). Not all hosts expose page size.
       let slideW = 960, slideH = 540;
 
@@ -835,6 +1191,41 @@ function bindNanoUI(){
   const impStyles = q('nmImportStyles');
   const impFile   = q('nmImportStylesFile');
 
+    // ---- Overlay UI wiring ----
+  const ovCorner   = q('ovCorner');
+  const ovOpacity  = q('ovOpacity');
+  const ovOpacityVal = q('ovOpacityVal');
+  const ovApplyBtn = q('ovApply');
+  const ovRemoveBtn= q('ovRemove');
+  const ovHint     = q('ovHint');
+
+  if(ovOpacity && ovOpacityVal){
+    ovOpacity.addEventListener('input', ()=>{ ovOpacityVal.textContent = `${ovOpacity.value}%`; });
+  }
+  if(ovApplyBtn){
+    ovApplyBtn.addEventListener('click', async ()=>{
+      try{
+        if(ovHint) ovHint.textContent = 'Applying...';
+        await ovApplyToCurrent({ corner: ovCorner?.value || 'tr', opacity: Number(ovOpacity?.value||80) });
+        if(ovHint) ovHint.textContent = 'Overlay applied.';
+      }catch(e){
+        console.error(e);
+        if(ovHint) ovHint.textContent = 'Failed to apply overlay.';
+      }
+    });
+  }
+  if(ovRemoveBtn){
+    ovRemoveBtn.addEventListener('click', async ()=>{
+      try{
+        await PowerPoint.run(async (ctx)=>{ await ovRemoveCurrent(ctx); });
+        if(ovHint) ovHint.textContent = 'Overlay removed (if existed).';
+      }catch(e){
+        console.error(e);
+        if(ovHint) ovHint.textContent = 'Failed to remove overlay.';
+      }
+    });
+  }
+
 if(expStyles){
   expStyles.addEventListener('click', ()=>{ nmExportAllStyles(); });
 }
@@ -910,17 +1301,37 @@ if(cacheBtn) cacheBtn.addEventListener('click', _afterGenHint);
     }
   }); }
 
-  if(applyBg){
+  // زر Apply as Background (سلايد واحد)
+if (applyBg){
   applyBg.addEventListener('click', async ()=>{
     const s   = nmReadInputs();
-    // لو فيه كاش للصورة الحالية يوفّر وقت
-    const b64 = (nmFindCachedForStyle ? nmFindCachedForStyle(s) : null);
+    nmSaveStyle(s);
     const hint = q('nmHint');
-    if(applyBgBatch){
+
+    // جرّب كاش أولاً
+    const b64 = (typeof nmFindCachedForStyle === 'function') ? nmFindCachedForStyle(s) : null;
+    if (b64){
+      await nmApplyAsBackground(b64, { sendToBack: !!(bgLock && bgLock.checked) });
+      if (hint) hint.textContent = 'Background applied from cache.';
+      return;
+    }
+
+    // مفيش كاش: ولّد ثم طبّق
+    const gen = await nmGenerate(s);
+    if (gen){
+      await nmApplyAsBackground(gen, { sendToBack: !!(bgLock && bgLock.checked) });
+      if (hint) hint.textContent = 'Background applied.';
+    } else {
+      if (hint) hint.textContent = 'Generation failed — cannot apply background.';
+    }
+  });
+}
+
+// زر Apply to Selected Slides (Batch)
+if (applyBgBatch){
   applyBgBatch.addEventListener('click', async ()=>{
     const s = nmReadInputs();
     nmSaveStyle(s);
-    // optional: show bar while batch is running
     nmShowBusy(true); nmSetProgress(0, 'Batch applying');
     try{
       await nmApplyAsBackgroundBatch(s);
@@ -931,61 +1342,46 @@ if(cacheBtn) cacheBtn.addEventListener('click', _afterGenHint);
   });
 }
 
-// (اختياري) غيّر التلميح لما يبدّل المستخدم حالة "Send to back"
-if(bgLock){
+// Toggle "Send to back"
+if (bgLock){
   bgLock.addEventListener('change', ()=>{
     const hint = q('nmHint');
-    if(hint) hint.textContent = bgLock.checked ? 'Backgrounds will be sent to back.' : 'Backgrounds inserted in front.';
+    if (hint) hint.textContent = bgLock.checked ? 'Backgrounds will be sent to back.' : 'Backgrounds inserted in front.';
   });
 }
 
-if(copySel){
+// Copy style → Selected
+if (copySel){
   copySel.addEventListener('click', async ()=>{
     const hint = q('nmHint');
     const s = nmReadInputs();
-    nmSaveStyle(s); // خزّن على السلايد الحالي كمان
+    nmSaveStyle(s);
     const ids = await ppGetSelectedSlideIds();
-    if(!ids || ids.length===0){
-      if(hint) hint.textContent = 'No selected slides.';
+    if (!ids || ids.length === 0){
+      if (hint) hint.textContent = 'No selected slides.';
       return;
     }
     const n = await nmCopyStyleToSlides(s, ids);
-    if(hint) hint.textContent = `Style copied to ${n} selected slide(s).`;
+    if (hint) hint.textContent = `Style copied to ${n} selected slide(s).`;
   });
-  nmUpdateStyleChipThrottled(s);
 }
 
-if(copyAll){
+// Copy style → All
+if (copyAll){
   copyAll.addEventListener('click', async ()=>{
     const hint = q('nmHint');
     const s = nmReadInputs();
-    nmSaveStyle(s); // خزّن على السلايد الحالي
+    nmSaveStyle(s);
     const ids = await ppGetAllSlideIds();
-    if(!ids || ids.length===0){
-      if(hint) hint.textContent = 'No slides found.';
+    if (!ids || ids.length === 0){
+      if (hint) hint.textContent = 'No slides found.';
       return;
     }
     const n = await nmCopyStyleToSlides(s, ids);
-    if(hint) hint.textContent = `Style copied to ${n} slide(s).`;
+    if (hint) hint.textContent = `Style copied to ${n} slide(s).`;
   });
-  nmUpdateStyleChipThrottled(s);
 }
 
-    if(b64){
-      await nmApplyAsBackground(b64);
-      if(hint) hint.textContent = 'Background applied from cache.';
-      return;
-    }
-
-    // مفيش كاش: نولّد، نخزّن، وبعدين نطبّق
-    const gen = await nmGenerate(s);
-    if(gen){
-      await nmApplyAsBackground(gen);
-      if(hint) hint.textContent = 'Background applied.';
-    }else{
-      if(hint) hint.textContent = 'Generation failed — cannot apply background.';
-    }
-  }); }
 
   if(btnCancel){
   btnCancel.addEventListener('click',()=>{
@@ -1198,6 +1594,7 @@ function initBoot(){
     getActiveEngine();
     restoreCurrentSlide();
     nmInit();
+    stylesDashInit();
     linkRestoreForSlide();
 
     const cur=getUIParams();
