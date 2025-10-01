@@ -47,6 +47,12 @@
   <Hosts>
     <Host xsi:type="Presentation">
       <DesktopFormFactor>
+        <SupportUrl DefaultValue="https://wolfy-wooolfy.github.io/nano-slides-pages/support.md" />
+        <PrivacyUrl DefaultValue="https://wolfy-wooolfy.github.io/nano-slides-pages/privacy.md" />
+        <TermsOfUseUrl DefaultValue="https://wolfy-wooolfy.github.io/nano-slides-pages/terms.md" />
+        <Contact>
+          <Email>nano.slides.support@gmail.com</Email>
+        </Contact>
         <ExtensionPoint xsi:type="PrimaryCommandSurface">
           <OfficeTab id="TabHome">
             <Group id="NIS.Ribbon.Group">

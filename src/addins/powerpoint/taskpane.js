@@ -854,7 +854,11 @@ function nmWriteInputs(s){
   nmUpdateStyleChipThrottled(s);
 }
 function nmHash(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
-function nmSize(aspect){ if(aspect==='4:3')return{w:1024,h:768}; if(aspect==='1:1')return{w:1024,h:1024}; return{w:1920,h:1080}; }
+function nmSize(aspect){
+  if (aspect === '4:3') return { w: 1024, h: 768 };   // 0.79 MP
+  if (aspect === '1:1') return { w: 1024, h: 1024 };  // 1.05 MP
+  return { w: 1280, h: 720 };                         // 0.92 MP (آمن تحت 2MP)
+}
 
 // ---- Abort helper: cancel any in-flight generation safely ----
 function nmAbortInFlight(reason='user-cancel'){
@@ -987,14 +991,20 @@ async function nmGenerateOnce(style, onProgress, ctrl, timeoutMs=45000){
     provider(style, onProgress, ctrl.signal),
     timeout
   ]);
-  if (ctrl.signal.aborted) throw new Error("canceled");
-
-  if(typeof result === 'string' && result.startsWith('data:image/')){
-    return { base64: result.split(',')[1], via: 'provider' };
-  }else if(result && typeof result.base64 === 'string'){
-    return { base64: result.base64, via: result.via || 'provider' };
+  if (typeof result === 'string') {
+    // ممكن يرجّع base64 خام أو data URL
+    if (result.startsWith('data:image/')) {
+      return { base64: result.split(',')[1], via: 'provider' };
+    }
+    return { base64: result, via: 'provider' };
   }
-  throw new Error('empty-result');
+
+  if (result && typeof result.base64 === 'string') {
+    const b64 = result.base64.startsWith('data:image/')
+      ? result.base64.split(',')[1]
+      : result.base64;
+    return { base64: b64, via: result.via || 'provider' };
+  }
 }
 // ---- Apply generated image as slide background ----
 // ---- Apply generated image as slide background (fit & optional send-to-back) ----
