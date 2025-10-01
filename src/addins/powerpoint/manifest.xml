@@ -4,8 +4,8 @@
            xsi:type="TaskPaneApp">
   <!-- NIS canonical manifest for PowerPoint -->
   <Id>d5fb3bcb-8f2f-4a1a-9e25-1a8b8fd8d6e7</Id>
-  <Version>0.1.0.0</Version>
-  <ProviderName>Wolfy-Wooolfy</ProviderName>
+  <Version>1.0.1.0</Version>
+  <ProviderName>Khaled-Elmasry</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
 
   <DisplayName DefaultValue="Nano Interactive Slides"/>
@@ -16,6 +16,11 @@
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-64.png"/>
 
   <SupportUrl DefaultValue="https://github.com/Wolfy-Wooolfy/nano-interactive-slides"/>
+
+  <AppDomains>
+    <AppDomain>https://localhost:3000</AppDomain>
+    <AppDomain>http://localhost:8787</AppDomain>
+  </AppDomains>
 
   <Hosts>
     <Host Name="Presentation"/>
@@ -33,4 +38,64 @@
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+                  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:type="VersionOverridesV1_0">
+
+  <Hosts>
+    <Host xsi:type="Presentation">
+      <DesktopFormFactor>
+        <ExtensionPoint xsi:type="PrimaryCommandSurface">
+          <OfficeTab id="TabHome">
+            <Group id="NIS.Ribbon.Group">
+              <Label resid="NIS.Group.Label"/>
+              <Icon>
+                <bt:Image size="16" resid="NIS.Icon.16"/>
+                <bt:Image size="32" resid="NIS.Icon.32"/>
+                <bt:Image size="80" resid="NIS.Icon.80"/>
+              </Icon>
+              <Control xsi:type="Button" id="NIS.Ribbon.OpenPane">
+                <Label resid="NIS.Button.Label"/>
+                <Supertip>
+                  <Title resid="NIS.Button.Label"/>
+                  <Description resid="NIS.Button.Desc"/>
+                </Supertip>
+                <Icon>
+                  <bt:Image size="16" resid="NIS.Icon.16"/>
+                  <bt:Image size="32" resid="NIS.Icon.32"/>
+                  <bt:Image size="80" resid="NIS.Icon.80"/>
+                </Icon>
+                <Action xsi:type="ShowTaskpane">
+                  <TaskpaneId>ButtonId1</TaskpaneId>
+                  <SourceLocation resid="TaskPane.Url"/>
+                </Action>
+              </Control>
+            </Group>
+          </OfficeTab>
+        </ExtensionPoint>
+      </DesktopFormFactor>
+    </Host>
+  </Hosts>
+
+  <Resources>
+    <bt:Images>
+      <bt:Image id="NIS.Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png"/>
+      <bt:Image id="NIS.Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png"/>
+      <bt:Image id="NIS.Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png"/>
+    </bt:Images>
+    <bt:Urls>
+      <bt:Url id="TaskPane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
+    </bt:Urls>
+    <bt:ShortStrings>
+      <bt:String id="NIS.Button.Label" DefaultValue="Open Nano Pane"/>
+      <bt:String id="NIS.Group.Label" DefaultValue="Nano Slides"/>
+    </bt:ShortStrings>
+    <bt:LongStrings>
+      <bt:String id="NIS.Button.Desc" DefaultValue="Open the Nano Interactive Slides task pane."/>
+    </bt:LongStrings>
+  </Resources>
+</VersionOverrides>
+
 </OfficeApp>

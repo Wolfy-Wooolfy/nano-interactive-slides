@@ -46,7 +46,8 @@
       if (!res.ok) throw new Error(`provider-${res.status}`);
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       const data = ct.includes("application/json") ? await res.json() : JSON.parse(await res.text());
-      if (data && typeof data.base64 === "string" && data.base64.length > 100) return data;
+      const prov = res.headers.get("x-nis-provider") || "";
+      if (data && typeof data.base64 === "string" && data.base64.length > 100) return { base64: data.base64, provider: prov };
       throw new Error("provider-no-base64");
     }
 
@@ -65,6 +66,7 @@
       // 1) عبر Vite proxy (https://localhost:3000/nano/…)
       try {
         const data = await tryCall("/nano/generate", body, signal);
+        const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "mock";
         inc(onProgress, 100, "Done (proxy)");
         return { base64: data.base64 };
       } catch (e) {
@@ -75,6 +77,7 @@
       // 2) محاولة مباشرة على 8787 (قد تمنعها Mixed-Content في بعض الإعدادات، لكن نحاول)
       try {
         const data = await tryCall("http://localhost:8787/nano/generate", body, signal);
+        const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "mock";
         inc(onProgress, 100, "Done (direct)");
         return { base64: data.base64 };
       } catch (e) {
@@ -146,6 +149,7 @@
   <div class="grid">
     <div class="card">
       <h3 class="title">Nano Mode</h3>
+      <div id="nmProv" class="chip"></div>
       <div class="inputs">
         <div class="row">
           <label for="nmTheme">Style Theme</label>
@@ -244,7 +248,7 @@
       </div>
 
         <!-- Styles Dashboard -->
-         
+
         <!-- Overlay Label -->
       <div class="card" id="overlayCard" style="margin-top:12px">
         <h3 class="title">Overlay label</h3>
@@ -282,6 +286,9 @@
             <span class="muted">Use cached image if available</span>
           </label>
           <button id="sdRegenApplySelected">Regenerate + Apply (Selected)</button>
+          <button id="imgMetaExport">Export Image Metadata</button>
+          <button id="imgMetaImport">Import Image Metadata</button>
+          <input id="imgMetaImportFile" type="file" accept="application/json" style="display:none" />
           <div id="sdHint" class="muted" style="margin-left:auto"></div>
         </div>
 

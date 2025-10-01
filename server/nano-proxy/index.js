@@ -4,7 +4,10 @@ import cors from "cors";
 import sharp from "sharp";
 
 const app = express();
-app.use(cors({ origin: [/^https?:\/\/localhost:3000$/] }));
+app.use(cors({
+  origin: [/^https?:\/\/localhost:3000$/],
+  exposedHeaders: ['x-nis-provider']
+}));
 app.use(express.json({ limit: "8mb" }));
 
 const PORT   = Number(process.env.NANO_PROXY_PORT || 8787);
@@ -13,6 +16,10 @@ const MODEL  = process.env.NANO_MODEL || "black-forest-labs/flux-schnell";
 const TOKEN  = process.env.REPLICATE_API_TOKEN || "";
 const GKEY   = process.env.GOOGLE_API_KEY || "";
 const PXBKEY = process.env.PIXABAY_API_KEY || ""; // <<< جديد
+// [NIS limits]
+const MAX_MP = Number(process.env.NANO_MAX_MP || 2);           // بكسل-ميجا
+const RATE_PER_MIN = Number(process.env.NANO_RATE_PER_MIN || 10);
+let __NANO_WINDOW = { t: 0, c: 0 };
 
 /* ---------------- helpers ---------------- */
 function log(...a){ console.log("[NANO]", ...a); }
@@ -48,6 +55,54 @@ async function fetchImageAsBase64(url, timeoutMs=9000){
   const buf = Buffer.from(await r.arrayBuffer());
   return buf.toString("base64");
 }
+
+async function generateReplicate({ prompt, seed, width, height }) {
+  const ver = "5c7d0d8e-3d24-4f46-b5b2-8c95b6cd36a8";
+  const r = await fetch("https://api.replicate.com/v1/predictions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Token ${process.env.REPLICATE_API_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      version: ver,
+      input: {
+        prompt,
+        seed,
+        width,
+        height,
+        scheduler: "K_EULER_ANCESTRAL",
+        num_inference_steps: 28,
+        guidance_scale: 5
+      }
+    })
+  });
+  if (!r.ok) throw new Error("replicate-submit");
+  const sub = await r.json();
+  const id = sub.id;
+  for (;;) {
+    await new Promise(s => setTimeout(s, 1800));
+    const c = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
+      headers: { "Authorization": `Token ${process.env.REPLICATE_API_TOKEN}` }
+    });
+    if (!c.ok) throw new Error("replicate-check");
+    const j = await c.json();
+    if (j.status === "succeeded" && Array.isArray(j.output) && j.output[0]) {
+      const img = await fetch(j.output[0]);
+      if (!img.ok) throw new Error("replicate-image");
+      const buf = Buffer.from(await img.arrayBuffer());
+      const b64 = `data:image/png;base64,${buf.toString("base64")}`;
+      return { base64: b64, via: "replicate" };
+    }
+    if (j.status === "failed" || j.status === "canceled") throw new Error("replicate-failed");
+  }
+}
+
+// --- /nano/generate unified route ---
+
+app.get("/nano/provider", (req, res) => {
+  res.json({ provider: PROV || "mock" });
+});
 
 /* ---------------- مصادر مجانية ---------------- */
 // A) Pixabay (needs free API key)
@@ -221,6 +276,24 @@ async function pollPred(id, timeoutMs=90_000){
 app.post("/nano/generate", async (req, res) => {
   try {
     const body = req.body || {};
+
+    // --- NIS: limits (resolution + rate) ---
+    const w = Number(body.width)  || 0;
+    const h = Number(body.height) || 0;
+    const mp = Math.max(1, Math.round((w * h) / 1_000_000));
+    if (mp > MAX_MP) {
+      res.setHeader("x-nis-provider", PROV || "mock");
+      return res.status(413).json({ error: "too-large" });
+    }
+
+    const now = Date.now();
+    if (now - __NANO_WINDOW.t > 60_000) { __NANO_WINDOW = { t: now, c: 0 }; }
+    if (__NANO_WINDOW.c >= RATE_PER_MIN) {
+      res.setHeader("x-nis-provider", PROV || "mock");
+      return res.status(429).json({ error: "rate-limit" });
+    }
+    __NANO_WINDOW.c += 1;
+    // --- end limits ---
 
     if (PROV === "mock" || !PROV) {
       const out = await generateMock(body);

@@ -17,10 +17,10 @@
     "start-addin": "office-addin-debugging start src/addins/powerpoint/manifest.xml",
     "stop-addin": "office-addin-debugging stop src/addins/powerpoint/manifest.xml",
     "validate-addin": "office-addin-manifest validate src/addins/powerpoint/manifest.xml",
-    "dev-nano-proxy": "node ./server/nano-proxy/index.js"
+    "dev-nano-proxy": "node ./server/nano-proxy/index.js",
+    "validate-manifest": "office-addin-manifest validate src/addins/powerpoint/manifest.xml"
   },
   "devDependencies": {
-    "sharp": "^0.33.4",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
     "css-loader": "^7.1.2",
@@ -28,6 +28,8 @@
     "office-addin-debugging": "^6.0.3",
     "office-addin-dev-certs": "^2.0.3",
     "office-addin-dev-settings": "^3.0.3",
+    "office-addin-manifest": "^2.0.3",
+    "sharp": "^0.33.4",
     "style-loader": "^4.0.0",
     "ts-loader": "^9.5.4",
     "typescript": "^5.9.2",

@@ -2,3 +2,7 @@
   "nanoMode": ["nmTheme","nmSeed","nmPrompt","nmAspect","nmCaption","nmAutoInc","nmSave","nmStyleSelected","nmRegenSelected","nmBusy","nmHint"],
   "simulation": ["speed","speedVal","capacity","capacityVal","delay","delayVal","projectToggle","projectMs","autoStartToggle","stopOnChangeToggle","start","stop","reset","snapshot","exportJson","importJson","jsonFile","downloadPng","hostHint","preview"]
 }
+{
+  "stylesDash": ["stylesList", "sdRegenApplySelected", "sdUseCacheFirst", "sdHint"],
+  "overlay": ["ovCorner", "ovOpacity", "ovOpacityVal", "ovApply", "ovRemove", "ovHint"]
+}

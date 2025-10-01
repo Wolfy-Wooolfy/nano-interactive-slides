@@ -45,6 +45,9 @@ importers:
       office-addin-dev-settings:
         specifier: ^3.0.3
         version: 3.0.3(@microsoft/teamsapp-cli@3.0.7)
+      office-addin-manifest:
+        specifier: ^2.0.3
+        version: 2.0.3
       sharp:
         specifier: ^0.33.4
         version: 0.33.5

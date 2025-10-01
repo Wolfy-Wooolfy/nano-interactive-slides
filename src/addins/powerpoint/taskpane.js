@@ -8,6 +8,12 @@ if (typeof window !== 'undefined' && typeof Office !== 'undefined' && !Office.in
   Office.initialize = function () {};
 }
 
+// تأكيد نداء onReady مبكرًا لتفادي رسالة "Office.js has not fully loaded"
+try {
+  if (window.Office && typeof Office.onReady === 'function') {
+    Office.onReady(() => {});
+  }
+} catch (_) {}
 
 // ====== (كل كود الملف الحالي يبدأ من هنا كما هو) ======
 /* ======== Nano Interactive Slides - taskpane.js (per-slide + linked sequence + nano progress/cancel + caching) ======== */
@@ -34,6 +40,13 @@ const NIS_DEFAULT_PARAMS = Object.freeze({
   autoStart: false,
   stopOnChange: false
 });
+
+const IMG_META_KEY = "NIS_BG_META";
+function nisReadAllBgMeta(){ try{return JSON.parse(localStorage.getItem(IMG_META_KEY)||"{}");}catch(e){return {};}}
+function nisWriteAllBgMeta(obj){ localStorage.setItem(IMG_META_KEY, JSON.stringify(obj)); }
+function nisSetSlideBgMeta(slideId, meta){ const all=nisReadAllBgMeta(); all[slideId]=meta; nisWriteAllBgMeta(all); }
+function nisExportBgMeta(){ const data=nisReadAllBgMeta(); const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="nis-image-metadata.json"; a.click(); URL.revokeObjectURL(a.href); }
+function nisImportBgMetaFromText(text){ const incoming=JSON.parse(text); const current=nisReadAllBgMeta(); const merged={...current,...incoming}; nisWriteAllBgMeta(merged); if(typeof stylesDashRefresh==="function") stylesDashRefresh(); }
 
 /* ---------- Fast in-memory cache ---------- */
 const __NIS_STATE_CACHE = new Map();   // slideKey -> params
@@ -165,6 +178,7 @@ function nmSaveStyleForSlideKey(k,s){
 function nmImgMetaKey(slideId){ return `NIS:imgmeta:${slideId}`; }
 function nmSaveImageMeta(slideId, meta){
   try { localStorage.setItem(nmImgMetaKey(slideId), JSON.stringify(meta||{})); } catch(e){}
+  try { if (typeof nisSetSlideBgMeta === 'function') nisSetSlideBgMeta(String(slideId), meta || {}); } catch(_){}
 }
 function nmLoadImageMeta(slideId){
   try { return JSON.parse(localStorage.getItem(nmImgMetaKey(slideId)) || '{}'); } catch(e){ return {}; }
@@ -357,7 +371,6 @@ function bindSimUI(){
   const d=q('delay'), dv=q('delayVal');
   const pt=q('projectToggle'), pm=q('projectMs');
 
-  if(startBtn){ startBtn.addEventListener('click',()=>{ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }); }
   if(stopBtn){  stopBtn .addEventListener('click',()=>{ const e=getActiveEngine(); e?.stop?.();  linkAutoClear(); }); }
   if(resetBtn){ resetBtn.addEventListener('click',()=>{ setUIParams({...NIS_DEFAULT_PARAMS}); const e=getActiveEngine(); e?.reset?.(); persistCurrentSlide(); }); }
 
@@ -371,6 +384,17 @@ function bindSimUI(){
   if(pt){ pt.addEventListener('change',()=>{ const v=!!pt.checked; const e=getActiveEngine(); e?.setProjectToSlide?.(v); persistCurrentSlide(); }); }
   if(pm){ pm.addEventListener('input',()=>{ const v=Number(pm.value)||1000; const e=getActiveEngine(); e?.setProjectMs?.(v); });
         pm.addEventListener('change',()=>{ persistCurrentSlide(); }); }
+
+  if(startBtn){
+    startBtn.addEventListener('click', ()=>{
+      const p = getUIParams();
+      const e = getActiveEngine();
+      if(e && e.setProjectToSlide) e.setProjectToSlide(!!p.projectToSlide);
+      if(e && e.setProjectMs)       e.setProjectMs(Number(p.projectMs||1000));
+      e?.start?.();
+      linkAutoArmForActive();
+    });
+  }
 
   if(snapBtn){ snapBtn.addEventListener('click',()=>{ const e=getActiveEngine(); e?.snapshot?.(); }); }
   if(expBtn){  expBtn .addEventListener('click',()=>{ const e=getActiveEngine(); e?.export?.();  }); }
@@ -396,7 +420,16 @@ function exportJSON(){
 }
 function importJSON(file){
   const r=new FileReader();
-  r.onload=()=>{ try{ const data=JSON.parse(r.result); const p=data&&data.params?data.params:data; setUIParams(p); persistCurrentSlide(); const e=getActiveEngine(); e?.reset?.(); }catch(e){} };
+  r.onload=()=>{ 
+    try{
+      const data = JSON.parse(r.result);
+      const p = (data && data.params) ? data.params : data;
+      const e = getActiveEngine();
+      if (e && e.reset) e.reset();           // أولًا: رجّع الحالة الافتراضية
+      setUIParams(p);                        // ثانيًا: طبّق الإعدادات المستوردة على الـ UI والموتور
+      persistCurrentSlide();                 // وأخيرًا خزّنها
+    }catch(_){}
+  };
   r.readAsText(file);
 }
 function downloadPNG(){
@@ -749,6 +782,25 @@ function stylesDashInit(){
     const btn     = document.getElementById('sdRegenApplySelected');
     const hint    = document.getElementById('sdHint');
     const useCache= document.getElementById('sdUseCacheFirst');
+
+    const imgExport = document.getElementById('imgMetaExport');
+    const imgImport = document.getElementById('imgMetaImport');
+    const imgFile   = document.getElementById('imgMetaImportFile');
+
+    if (imgExport) imgExport.addEventListener('click', ()=>{ nisExportBgMeta(); });
+
+    if (imgImport) imgImport.addEventListener('click', ()=>{ if(imgFile) imgFile.click(); });
+
+    if (imgFile) {
+      imgFile.addEventListener('change', (e)=>{
+        const f = e.target.files && e.target.files[0];
+        if(!f) return;
+        const r = new FileReader();
+        r.onload = ()=> { nisImportBgMetaFromText(r.result); };
+        r.readAsText(f);
+        e.target.value="";
+      });
+    }
 
     if (btn){
       btn.addEventListener('click', async ()=>{
@@ -1597,9 +1649,14 @@ function initBoot(){
     stylesDashInit();
     linkRestoreForSlide();
 
-    const cur=getUIParams();
-    if(cur.autoStart){ const e=getActiveEngine(); e?.start?.(); linkAutoArmForActive(); }
-  });
+    const cur = getUIParams();
+    if(cur.autoStart){
+      const e = getActiveEngine();
+      if(e && e.setProjectToSlide) e.setProjectToSlide(!!cur.projectToSlide);
+      if(e && e.setProjectMs)       e.setProjectMs(Number(cur.projectMs||1000));
+      e?.start?.();
+      linkAutoArmForActive();
+    }});
 
   wireSlideChange();
   setHostHint();

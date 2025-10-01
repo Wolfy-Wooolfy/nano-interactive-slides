@@ -25,6 +25,7 @@ export default defineConfig({
         secure: false,
       },
     },
+    hmr: { overlay: false }
   },
   build: { outDir: "dist", emptyOutDir: true },
 });
